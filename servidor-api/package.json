@@ -1,0 +1,26 @@
+{
+  "name": "servidor-api",
+  "version": "1.0.0",
+  "description": "Backend para app de Food Delivery",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.13.0",
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.5.2",
+    "express-validator": "^7.3.2",
+    "firebase-admin": "^14.1.0",
+    "graphql": "^16.14.2",
+    "helmet": "^8.2.0",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}

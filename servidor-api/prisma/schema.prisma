@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENT
+  RESTAURANT_OWNER
+  ADMIN
+}
+
+enum RestaurantStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  PENDING
+  PREPARING
+  ON_THE_WAY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  DATAPHONE
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  role      Role     @default(CLIENT)
+  phone     String?
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  restaurants Restaurant[]
+  orders      Order[]
+}
+
+model Restaurant {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  address     String
+  imageUrl    String?
+  status      RestaurantStatus @default(PENDING)
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products    Product[]
+  orders      Order[]
+  chatMessages ChatMessage[]
+
+  operatingHours Json?
+  deliveryFee    Float @default(0)
+  minOrder       Float @default(0)
+  coverageRadius Float @default(0)
+  bufferTime     Int   @default(30)
+}
+
+model Product {
+  id           String     @id @default(uuid())
+  name         String
+  description  String?
+  price        Float
+  imageUrl     String?
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  category     String?
+  isOutofStock Boolean    @default(false)
+  isFeatured   Boolean    @default(false)
+
+  orderItems   OrderItem[]
+}
+
+model Order {
+  id            String        @id @default(uuid())
+  totalAmount   Float
+  status        OrderStatus   @default(PENDING)
+  paymentMethod PaymentMethod
+  deliveryAddress String
+
+  clientId      String
+  client        User          @relation(fields: [clientId], references: [id])
+  
+  restaurantId  String
+  restaurant    Restaurant    @relation(fields: [restaurantId], references: [id])
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  items         OrderItem[]
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Float    // Price at the time of order
+  options   String?  // JSON string with selected ingredients, sauces, extras
+}
+
+model ChatMessage {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  senderRole   String     // 'RESTAURANT_OWNER' | 'ADMIN'
+  senderName   String
+  content      String
+  createdAt    DateTime   @default(now())
+}
+
+model PlatformConfig {
+  id                 String   @id @default(uuid())
+  platformName       String   @default("Tastio")
+  supportEmail       String   @default("soporte@tastio.com")
+  supportPhone       String?
+  paymentGatewayKeys Json?
+  currency           String   @default("EUR")
+  language           String   @default("es")
+  emailNotifications Boolean  @default(true)
+  pushNotifications  Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
