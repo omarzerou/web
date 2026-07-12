@@ -3,40 +3,20 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  CLIENT
-  RESTAURANT_OWNER
-  ADMIN
-}
-
-enum RestaurantStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
-enum OrderStatus {
-  PENDING
-  PREPARING
-  ON_THE_WAY
-  DELIVERED
-  CANCELLED
-}
-
-enum PaymentMethod {
-  CASH
-  DATAPHONE
-}
+// Roles: CLIENT | RESTAURANT_OWNER | ADMIN
+// RestaurantStatus: PENDING | APPROVED | REJECTED
+// OrderStatus: PENDING | PREPARING | ON_THE_WAY | DELIVERED | CANCELLED
+// PaymentMethod: CASH | DATAPHONE
 
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
   name      String
-  role      Role     @default(CLIENT)
+  role      String   @default("CLIENT")
   phone     String?
   address   String?
   createdAt DateTime @default(now())
@@ -52,7 +32,7 @@ model Restaurant {
   description String?
   address     String
   imageUrl    String?
-  status      RestaurantStatus @default(PENDING)
+  status      String   @default("PENDING")
   ownerId     String
   owner       User     @relation(fields: [ownerId], references: [id])
   createdAt   DateTime @default(now())
@@ -62,7 +42,10 @@ model Restaurant {
   orders      Order[]
   chatMessages ChatMessage[]
 
-  operatingHours Json?
+  subscriptionPlan String @default("FREE")
+  paymentConfigured Boolean @default(false)
+
+  operatingHours String?
   deliveryFee    Float @default(0)
   minOrder       Float @default(0)
   coverageRadius Float @default(0)
@@ -88,20 +71,20 @@ model Product {
 }
 
 model Order {
-  id            String        @id @default(uuid())
+  id            String   @id @default(uuid())
   totalAmount   Float
-  status        OrderStatus   @default(PENDING)
-  paymentMethod PaymentMethod
+  status        String   @default("PENDING")
+  paymentMethod String
   deliveryAddress String
 
   clientId      String
-  client        User          @relation(fields: [clientId], references: [id])
+  client        User     @relation(fields: [clientId], references: [id])
   
   restaurantId  String
-  restaurant    Restaurant    @relation(fields: [restaurantId], references: [id])
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
   
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   items         OrderItem[]
 }
@@ -132,7 +115,7 @@ model PlatformConfig {
   platformName       String   @default("Tastio")
   supportEmail       String   @default("soporte@tastio.com")
   supportPhone       String?
-  paymentGatewayKeys Json?
+  paymentGatewayKeys String?
   currency           String   @default("EUR")
   language           String   @default("es")
   emailNotifications Boolean  @default(true)

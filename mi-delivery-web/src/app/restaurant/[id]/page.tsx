@@ -390,6 +390,7 @@ export default function RestaurantPage() {
       if (localRest) {
         setRest({
           id, name: localRest.name, tagline: localRest.address || "Local asociado a Tastio",
+          subscriptionPlan: localRest.subscriptionPlan,
           heroImg: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
           time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
           menu: [
@@ -505,8 +506,15 @@ export default function RestaurantPage() {
           </button>
         </div>
         <div className="absolute bottom-0 left-0 right-0 px-5 pb-5 sm:pb-8">
-          <h1 className="text-[28px] sm:text-[36px] font-black text-white leading-tight drop-shadow-md">{rest.name}</h1>
-          <p className="text-white/80 text-[14px] font-medium mt-0.5">{rest.tagline}</p>
+          <h1 className="text-[28px] sm:text-[36px] font-black text-white leading-tight drop-shadow-md flex items-center gap-3">
+            {rest.name}
+            {rest.subscriptionPlan && (
+              <span className={`text-[12px] uppercase font-black px-2 py-1 rounded-lg ${rest.subscriptionPlan !== 'FREE' ? 'bg-[#FFBE00] text-black' : 'bg-white/20 text-white backdrop-blur-sm'}`}>
+                {rest.subscriptionPlan !== 'FREE' ? 'Premium' : 'Gratuito'}
+              </span>
+            )}
+          </h1>
+          <p className="text-white/80 text-[14px] font-medium mt-1">{rest.tagline}</p>
         </div>
       </div>
 

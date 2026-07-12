@@ -14,7 +14,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  User, Mail, Lock, Phone, Store, Eye, EyeOff, ArrowRight, ChevronLeft
+  User, Mail, Lock, Phone, Store, Eye, EyeOff, ArrowRight, ChevronLeft, MapPin
 } from "lucide-react";
 
 type Tab = "cliente" | "restaurante";
@@ -27,6 +27,7 @@ export default function RegisterPage() {
   const [cName,     setCName]     = useState("");
   const [cEmail,    setCEmail]    = useState("");
   const [cPhone,    setCPhone]    = useState("");
+  const [cAddress,  setCAddress]  = useState("");
   const [cPassword, setCPassword] = useState("");
   const [cShowPass, setCShowPass] = useState(false);
 
@@ -37,6 +38,8 @@ export default function RegisterPage() {
   const [rShowPass, setRShowPass] = useState(false);
   const [rName,     setRName]     = useState("");
   const [rAddress,  setRAddress]  = useState("");
+  const [rPlan,     setRPlan]     = useState("MONTHLY");
+  const [rCard,     setRCard]     = useState("");
 
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(false);
@@ -90,7 +93,7 @@ export default function RegisterPage() {
       await fetch("http://localhost:4000/api/auth/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: cEmail, name: cName, phone: cPhone }),
+        body: JSON.stringify({ email: cEmail, name: cName, phone: cPhone, address: cAddress }),
       }).catch(() => {});
       router.push("/");
     } catch (err: any) {
@@ -115,7 +118,7 @@ export default function RegisterPage() {
       const res = await fetch("http://localhost:4000/api/auth/sync-restaurant", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userName: rOwner, restaurantName: rName, restaurantAddress: rAddress }),
+        body: JSON.stringify({ userName: rOwner, restaurantName: rName, restaurantAddress: rAddress, subscriptionPlan: rPlan, paymentConfigured: !!rCard }),
       });
 
       if (!res.ok) throw new Error("Error registrando restaurante en el servidor");
@@ -213,8 +216,15 @@ export default function RegisterPage() {
               {/* Phone */}
               <div className="relative">
                 <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#BBBBBB]" />
-                <input type="tel" placeholder="Teléfono (opcional)" value={cPhone}
+                <input type="tel" required placeholder="Teléfono" value={cPhone}
                   onChange={e => setCPhone(e.target.value)} suppressHydrationWarning
+                  className={`${inputCls} pl-10 pr-4`} />
+              </div>
+              {/* Address */}
+              <div className="relative">
+                <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#BBBBBB]" />
+                <input type="text" required placeholder="Tu dirección completa" value={cAddress}
+                  onChange={e => setCAddress(e.target.value)} suppressHydrationWarning
                   className={`${inputCls} pl-10 pr-4`} />
               </div>
               {/* Password */}
@@ -294,6 +304,28 @@ export default function RegisterPage() {
               <input type="text" required placeholder="Dirección exacta (ej. Calle Tarifa 15, Algeciras)" value={rAddress}
                 onChange={e => setRAddress(e.target.value)} suppressHydrationWarning
                 className={`${inputCls} pl-10 pr-4`} />
+            </div>
+
+            <div className="h-px bg-[#F5F5F5] my-2" />
+
+            {/* Plan Subscription */}
+            <div className="bg-[#FFF3EE] rounded-2xl p-4 border border-[#FFD5C2]">
+              <p className="text-[13px] font-bold text-[#FF6B35] mb-2 flex items-center gap-1.5">
+                <Store className="w-4 h-4" /> Plan de uso (¡1 mes GRATIS de prueba!)
+              </p>
+              <div className="space-y-3">
+                <select value={rPlan} onChange={(e) => setRPlan(e.target.value)}
+                  className="w-full bg-white border border-[#FFD5C2] rounded-xl py-2.5 px-3 text-[13px] font-medium outline-none text-[#1B1B1B] focus:border-[#FF6B35]">
+                  <option value="MONTHLY">Plan Mensual (29€/mes después del 1er mes)</option>
+                  <option value="ANNUAL">Plan Anual (290€/año después del 1er mes)</option>
+                </select>
+
+                <div className="relative">
+                  <input type="text" placeholder="Nº de Tarjeta (opcional ahora)" value={rCard}
+                    onChange={(e) => setRCard(e.target.value)}
+                    className="w-full bg-white border border-[#FFD5C2] rounded-xl py-2.5 px-3 text-[13px] font-medium outline-none text-[#1B1B1B] focus:border-[#FF6B35] placeholder:text-[#BBB]" />
+                </div>
+              </div>
             </div>
 
             {error && <div className="text-[13px] text-red-500 bg-red-50 border border-red-100 px-4 py-2.5 rounded-xl font-medium">{error}</div>}

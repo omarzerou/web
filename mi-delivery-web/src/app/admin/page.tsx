@@ -15,6 +15,16 @@ import { useRouter } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 // ─── TRADUCCIONES ─────────────────────────────────────────────────────────────
+const getHeaders = (token: string, isJson: boolean = false) => {
+  const headers: any = { "Authorization": `Bearer ${token}` };
+  if (isJson) headers["Content-Type"] = "application/json";
+  if (typeof window !== "undefined") {
+    const imp = localStorage.getItem("impersonateRestaurantId");
+    if (imp) headers["X-Impersonate-Restaurant"] = imp;
+  }
+  return headers;
+};
+
 const TRANSLATIONS: any = {
   "Español": {
     search: "Buscar aquí...", contact: "Chat con Admin", stats: "Estadísticas",
@@ -120,11 +130,15 @@ export default function AdminPage() {
     userRef.current = user;
     try {
       const token = await user.getIdToken();
+      const impersonateId = typeof window !== "undefined" ? localStorage.getItem("impersonateRestaurantId") : null;
+      const headers: any = { "Authorization": `Bearer ${token}` };
+      if (impersonateId) headers["X-Impersonate-Restaurant"] = impersonateId;
+
       const [resStats, resOrders, resProducts, resChart] = await Promise.all([
-        fetch("http://localhost:4000/api/restaurant-admin/stats", { headers: { "Authorization": `Bearer ${token}` } }),
-        fetch("http://localhost:4000/api/restaurant-admin/orders", { headers: { "Authorization": `Bearer ${token}` } }),
-        fetch("http://localhost:4000/api/restaurant-admin/products", { headers: { "Authorization": `Bearer ${token}` } }),
-        fetch("http://localhost:4000/api/restaurant-admin/chart-data", { headers: { "Authorization": `Bearer ${token}` } }),
+        fetch("http://localhost:4000/api/restaurant-admin/stats", { headers }),
+        fetch("http://localhost:4000/api/restaurant-admin/orders", { headers }),
+        fetch("http://localhost:4000/api/restaurant-admin/products", { headers }),
+        fetch("http://localhost:4000/api/restaurant-admin/chart-data", { headers }),
       ]);
       if (resStats.ok) {
         const data = await resStats.json();
@@ -158,7 +172,7 @@ export default function AdminPage() {
     if (!user) return;
     try {
       const token = await user.getIdToken();
-      const res = await fetch("http://localhost:4000/api/chat/messages", { headers: { "Authorization": `Bearer ${token}` } });
+      const res = await fetch("http://localhost:4000/api/chat/messages", { headers: getHeaders(token) });
       if (res.ok) setChatMessages(await res.json());
     } catch (e) {}
   }, []);
@@ -207,7 +221,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch("http://localhost:4000/api/restaurant-admin/profile", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: getHeaders(token, true),
         body: JSON.stringify({ description: setupDescription, imageUrl: setupImage || undefined })
       });
       if (res.ok) {
@@ -236,7 +250,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch("http://localhost:4000/api/products", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: getHeaders(token, true),
         body: JSON.stringify({ ...newProduct, price: parseFloat(newProduct.price), imageUrl: newProductImage || undefined })
       });
       if (res.ok) {
@@ -265,7 +279,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch(`http://localhost:4000/api/products/${id}`, {
         method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
+        headers: getHeaders(token)
       });
       if (res.ok) setProducts(prev => prev.filter(p => p.id !== id));
     } catch (e) {}
@@ -278,7 +292,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch(`http://localhost:4000/api/products/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: getHeaders(token, true),
         body: JSON.stringify({ [field]: value })
       });
       if (res.ok) {
@@ -294,7 +308,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch(`http://localhost:4000/api/orders/${id}/status`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: getHeaders(token, true),
         body: JSON.stringify({ status })
       });
       if (res.ok) {
@@ -312,7 +326,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch("http://localhost:4000/api/restaurant-admin/settings", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: getHeaders(token, true),
         body: JSON.stringify(restaurantConfig)
       });
       if (res.ok) {
@@ -335,7 +349,7 @@ export default function AdminPage() {
       const token = await user.getIdToken();
       const res = await fetch("http://localhost:4000/api/chat/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: getHeaders(token, true),
         body: JSON.stringify({ content: chatInput.trim() })
       });
       if (res.ok) {
@@ -389,6 +403,53 @@ export default function AdminPage() {
               Refrescar estado
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  const handlePayment = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const headers = getHeaders(token, true);
+      const res = await fetch("http://localhost:4000/api/restaurant-admin/payment", {
+        method: "POST",
+        headers
+      });
+      if (res.ok) {
+        alert("✅ Pago configurado con éxito. Suscripción activada.");
+        fetchAdminData(user);
+      }
+    } catch (e) {}
+  };
+
+  if (restaurant && restaurant.subscriptionPlan !== 'FREE' && !restaurant.paymentConfigured) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-6" style={{ fontFamily: "'Inter', sans-serif" }}>
+        <div className="bg-white rounded-3xl p-10 shadow-sm border border-[#F0F2F5] max-w-md w-full text-center">
+          <div className="w-20 h-20 bg-orange-50 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Store className="w-10 h-10 text-orange-500" />
+          </div>
+          <h1 className="text-[22px] font-extrabold text-[#1A202C] mb-3">Suscripción Requerida</h1>
+          <p className="text-[14px] text-[#718096] mb-8 leading-relaxed">
+            Tu plan gratuito ha terminado. Por favor, configura tu pago {restaurant.subscriptionPlan === 'MONTHLY' ? 'mensual' : 'anual'} para continuar usando el panel de control y recibir pedidos.
+          </p>
+
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 text-left space-y-4">
+            <p className="text-[12px] font-bold text-gray-500 uppercase tracking-wider mb-2">Simulación de Pago</p>
+            <input type="text" placeholder="Número de Tarjeta" defaultValue="4242 4242 4242 4242" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-[13px] bg-white outline-none" disabled />
+            <div className="flex gap-3">
+              <input type="text" placeholder="MM/AA" defaultValue="12/28" className="w-1/2 px-3 py-2 border border-gray-300 rounded-lg text-[13px] bg-white outline-none" disabled />
+              <input type="text" placeholder="CVC" defaultValue="123" className="w-1/2 px-3 py-2 border border-gray-300 rounded-lg text-[13px] bg-white outline-none" disabled />
+            </div>
+          </div>
+
+          <button onClick={handlePayment}
+            className="w-full py-3.5 px-4 rounded-xl bg-black text-white text-[14px] font-bold hover:bg-gray-800 transition-colors shadow-lg shadow-black/10">
+            Suscribirse y Desbloquear Panel
+          </button>
         </div>
       </div>
     );
@@ -919,23 +980,34 @@ export default function AdminPage() {
                 <p className="text-[13px] text-[#A0AEC0]">Comunícate directamente con el equipo de Tastio</p>
               </div>
 
-              <div className="bg-white rounded-3xl border border-[#F0F2F5] shadow-sm flex flex-col" style={{ height: "calc(100vh - 280px)" }}>
+              <div className="bg-[#EFEAE2] rounded-3xl border border-[#F0F2F5] shadow-sm flex flex-col overflow-hidden" style={{ height: "calc(100vh - 280px)" }}>
+                {/* Header */}
+                <div className="bg-[#00A884] text-white px-4 py-3 flex items-center gap-3 shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                    <MessageCircle className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-[15px] truncate leading-tight">Soporte Tastio</p>
+                    <p className="text-[12px] text-white/80 truncate">Línea directa con SuperAdmin</p>
+                  </div>
+                </div>
+
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {chatMessages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center">
-                      <MessageCircle className="w-16 h-16 text-[#E2E8F0] mb-4" />
-                      <p className="text-[15px] font-bold text-[#A0AEC0]">Empieza una conversación</p>
-                      <p className="text-[13px] text-[#CBD5E0] mt-1">El SuperAdmin te responderá lo antes posible</p>
-                    </div>
-                  ) : chatMessages.map((msg: any) => {
+                <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundSize: 'contain', backgroundRepeat: 'repeat' }}>
+                  <div className="text-center my-4">
+                    <span className="bg-[#FFEEDB] text-[#1B1B1B] text-[11px] font-bold px-3 py-1 rounded-lg inline-block shadow-sm">
+                      Chat Oficial de Soporte Tastio
+                    </span>
+                  </div>
+
+                  {chatMessages.map((msg: any) => {
                     const isMe = msg.senderRole === 'RESTAURANT_OWNER';
                     return (
                       <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[70%] rounded-2xl px-4 py-3 ${isMe ? 'bg-[#FF6B35] text-white rounded-br-md' : 'bg-[#F8F9FA] text-[#1A202C] rounded-bl-md border border-[#F0F2F5]'}`}>
-                          {!isMe && <p className="text-[11px] font-bold text-[#FF6B35] mb-1">SuperAdmin</p>}
-                          <p className="text-[14px] leading-relaxed">{msg.content}</p>
-                          <p className={`text-[10px] mt-1.5 ${isMe ? 'text-white/70 text-right' : 'text-[#A0AEC0]'}`}>
+                        <div className={`max-w-[80%] rounded-2xl px-3 py-2 shadow-sm relative text-[14px] ${isMe ? 'bg-[#D9FDD3] rounded-tr-sm text-[#1B1B1B]' : 'bg-white rounded-tl-sm text-[#1B1B1B]'}`}>
+                          {!isMe && <p className="text-[11px] font-bold text-[#FF6B35] mb-0.5">SuperAdmin</p>}
+                          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                          <p className={`text-[10px] mt-1 opacity-60 text-right ${isMe ? 'text-[#1B1B1B]' : 'text-[#888]'}`}>
                             {new Date(msg.createdAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
                           </p>
                         </div>
@@ -945,22 +1017,22 @@ export default function AdminPage() {
                   <div ref={chatEndRef} />
                 </div>
 
+                
                 {/* Input */}
-                <div className="p-4 border-t border-[#F0F2F5]">
-                  <div className="flex gap-3">
+                <div className="bg-[#F0F2F5] px-4 py-3 shrink-0 border-t border-[#E2E8F0]">
+                  <form onSubmit={(e) => { e.preventDefault(); handleSendChat(); }} className="flex gap-2 items-center">
                     <input
                       value={chatInput}
                       onChange={e => setChatInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendChat(); } }}
-                      className="flex-1 px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35]"
-                      placeholder="Escribe un mensaje..."
+                      className="flex-1 bg-white border-none rounded-full px-4 py-3 text-[14px] outline-none shadow-sm text-[#1B1B1B]"
+                      placeholder="Escribe un mensaje al SuperAdmin..."
                       maxLength={1000}
                     />
-                    <button onClick={handleSendChat} disabled={!chatInput.trim() || sendingChat}
-                      className="w-12 h-12 bg-[#FF6B35] text-white rounded-xl flex items-center justify-center hover:bg-[#e55a25] disabled:opacity-50 transition-colors">
-                      <Send className="w-5 h-5" />
+                    <button type="submit" disabled={!chatInput.trim() || sendingChat}
+                      className="w-11 h-11 rounded-full bg-[#00A884] flex items-center justify-center shrink-0 shadow-sm disabled:opacity-50 hover:bg-[#008f6f] transition-colors">
+                      <Send className="w-5 h-5 text-white" style={{ marginLeft: '-2px' }} />
                     </button>
-                  </div>
+                  </form>
                 </div>
               </div>
             </div>

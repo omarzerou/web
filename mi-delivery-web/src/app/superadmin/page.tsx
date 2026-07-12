@@ -62,6 +62,9 @@ export default function SuperAdminPage() {
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const [chartData, setChartData] = useState<any[]>([]);
 
+  // Chat State
+  const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [chatActiveRest, setChatActiveRest] = useState<any>(null);
   // Platform Config
   const [platformConfig, setPlatformConfig] = useState<any>({
     platformName: "Tastio", supportEmail: "", supportPhone: "", currency: "EUR", language: "es",
@@ -109,6 +112,9 @@ export default function SuperAdminPage() {
   };
 
   useEffect(() => {
+    // Si entramos al superadmin, limpiamos cualquier suplantación
+    localStorage.removeItem("impersonateRestaurantId");
+
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user) { router.push("/login"); return; }
       setIsAuthorized(true);
@@ -130,6 +136,23 @@ export default function SuperAdminPage() {
       });
       if (res.ok) {
         setRestaurantsList(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+      }
+    } catch (e) {}
+  };
+
+  const updateRestaurantSubscription = async (id: string, subscriptionPlan: string) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const res = await fetch(`http://localhost:4000/api/admin/restaurants/${id}/subscription`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ subscriptionPlan })
+      });
+      if (res.ok) {
+        setRestaurantsList(prev => prev.map(r => r.id === id ? { ...r, subscriptionPlan } : r));
+        alert(`Suscripción actualizada a ${subscriptionPlan}`);
       }
     } catch (e) {}
   };
@@ -196,6 +219,63 @@ export default function SuperAdminPage() {
       if (res.ok) setRestaurantProducts(prev => prev.filter(p => p.id !== productId));
     } catch (e) {}
   };
+
+  // --- CHAT LOGIC ---
+  const fetchChat = async (restaurantId: string) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const res = await fetch(`http://localhost:4000/api/admin/restaurants/${restaurantId}/chat`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setChatMessages(await res.json());
+      }
+    } catch (e) {}
+  };
+
+  const openChat = (rest: any) => {
+    setChatActiveRest(rest);
+    setChatModalOpen(true);
+    fetchChat(rest.id);
+  };
+
+  const sendChatMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !chatActiveRest) return;
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const res = await fetch(`http://localhost:4000/api/admin/restaurants/${chatActiveRest.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ content: chatInput })
+      });
+      if (res.ok) {
+        setChatInput("");
+        fetchChat(chatActiveRest.id);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    if (chatModalOpen && chatActiveRest) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, chatModalOpen]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (chatModalOpen && chatActiveRest) {
+      interval = setInterval(() => {
+        fetchChat(chatActiveRest.id);
+      }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [chatModalOpen, chatActiveRest]);
+  // ------------------
 
   const changeUserRole = async (userId: string, targetRole: string, reason: string) => {
     try {
@@ -456,6 +536,35 @@ export default function SuperAdminPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {r.status === 'APPROVED' && (
+                            <>
+                              <select
+                                className={`text-[12px] px-2 py-1.5 rounded-lg font-bold outline-none cursor-pointer border ${r.subscriptionPlan === 'FREE' ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-orange-50 border-orange-200 text-orange-600'}`}
+                                value={r.subscriptionPlan || 'FREE'}
+                                onChange={(e) => {
+                                  const newVal = e.target.value;
+                                  if (newVal !== r.subscriptionPlan) {
+                                    const planName = newVal === 'MONTHLY' ? 'Mensual' : newVal === 'ANNUAL' ? 'Anual' : 'Gratuito';
+                                    if (confirm(`¿Cambiar suscripción de ${r.name} a ${planName}?`)) {
+                                      updateRestaurantSubscription(r.id, newVal);
+                                    }
+                                  }
+                                }}
+                              >
+                                <option value="FREE">Gratuito (0€/mes)</option>
+                                <option value="MONTHLY">Mensual (29€/mes)</option>
+                                <option value="ANNUAL">Anual (290€/año)</option>
+                              </select>
+                              <button onClick={() => { localStorage.setItem("impersonateRestaurantId", r.id); router.push("/admin"); }}
+                                className="text-[12px] bg-black text-white px-3 py-1.5 rounded-lg font-bold hover:bg-gray-800 flex items-center gap-1 transition-colors">
+                                <LayoutDashboard className="w-3.5 h-3.5" /> Acceder al panel
+                              </button>
+                            </>
+                          )}
+                          <button onClick={() => openChat(r)}
+                            className="text-[12px] bg-blue-50 text-blue-600 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1 transition-colors">
+                            💬 Chat
+                          </button>
                           <button onClick={() => viewRestaurantDetail(r)}
                             className="text-[12px] text-[#6C5DD3] font-bold hover:underline flex items-center gap-1">
                             <Eye className="w-3.5 h-3.5" /> Ver detalle
@@ -672,8 +781,9 @@ export default function SuperAdminPage() {
                           </div>
                           <div>
                             <p className="font-bold text-[14px] text-[#1A202C]">{r.owner?.name || "Sin nombre"}</p>
-                            <p className="text-[12px] text-[#A0AEC0]">{r.owner?.email}</p>
-                            <p className="text-[11px] text-[#A0AEC0]">Restaurante: {r.name} · Estado: {r.status}</p>
+                            <p className="text-[12px] text-[#A0AEC0]">{r.owner?.email} {r.owner?.phone ? `· 📞 ${r.owner.phone}` : ''}</p>
+                            {r.owner?.address && <p className="text-[11px] text-[#A0AEC0]">📍 {r.owner.address}</p>}
+                            <p className="text-[11px] text-[#A0AEC0] mt-1">Restaurante: <span className="font-bold text-[#1A202C]">{r.name}</span></p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
@@ -698,6 +808,31 @@ export default function SuperAdminPage() {
                               <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${r.status === 'APPROVED' ? 'bg-green-100 text-green-600' : r.status === 'PENDING' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-500'}`}>
                                 {r.status}
                               </span>
+                              {r.status === 'APPROVED' && (
+                                <>
+                                  <select
+                                    className={`text-[12px] px-2 py-1.5 rounded-lg font-bold outline-none cursor-pointer border ${r.subscriptionPlan === 'FREE' ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-orange-50 border-orange-200 text-orange-600'}`}
+                                    value={r.subscriptionPlan || 'FREE'}
+                                    onChange={(e) => {
+                                      const newVal = e.target.value;
+                                      if (newVal !== r.subscriptionPlan) {
+                                        const planName = newVal === 'MONTHLY' ? 'Mensual' : newVal === 'ANNUAL' ? 'Anual' : 'Gratuito';
+                                        if (confirm(`¿Cambiar suscripción de ${r.name} a ${planName}?`)) {
+                                          updateRestaurantSubscription(r.id, newVal);
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    <option value="FREE">Gratuito (0€/mes)</option>
+                                    <option value="MONTHLY">Mensual (29€/mes)</option>
+                                    <option value="ANNUAL">Anual (290€/año)</option>
+                                  </select>
+                                  <button onClick={() => { localStorage.setItem("impersonateRestaurantId", r.id); router.push("/admin"); }}
+                                    className="text-[12px] bg-black text-white px-3 py-1.5 rounded-lg font-bold hover:bg-gray-800 flex items-center gap-1 transition-colors">
+                                    <LayoutDashboard className="w-3.5 h-3.5" /> Acceder al panel
+                                  </button>
+                                </>
+                              )}
                               <button
                                 onClick={async () => {
                                   const reason = prompt(`Razón para suspender a ${r.owner?.name} (${r.owner?.email}):\n\nEscribe la razón de la suspensión:`);
@@ -1123,6 +1258,74 @@ export default function SuperAdminPage() {
           </div>
         </div>
       )}
+
+      {/* CHAT MODAL */}
+      {chatModalOpen && chatActiveRest && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-[#EFEAE2] w-full max-w-[500px] h-[80vh] rounded-[32px] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="bg-[#00A884] text-white px-4 py-3 flex items-center gap-3 shrink-0">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                <Store className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-[15px] truncate leading-tight">{chatActiveRest.name}</p>
+                <p className="text-[12px] text-white/80 truncate">Dueño: {chatActiveRest.owner?.name || 'Desconocido'}</p>
+              </div>
+              <button onClick={() => setChatModalOpen(false)} className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors">
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+            
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundSize: 'contain', backgroundRepeat: 'repeat' }}>
+              <div className="text-center my-4">
+                <span className="bg-[#FFEEDB] text-[#1B1B1B] text-[11px] font-bold px-3 py-1 rounded-lg inline-block shadow-sm">
+                  Chat Oficial de Soporte Tastio
+                </span>
+              </div>
+              
+              {chatMessages.map((msg, i) => {
+                const isAdmin = msg.senderRole === 'ADMIN';
+                return (
+                  <div key={i} className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[80%] rounded-2xl px-3 py-2 shadow-sm relative text-[14px] ${isAdmin ? 'bg-[#D9FDD3] rounded-tr-sm text-[#1B1B1B]' : 'bg-white rounded-tl-sm text-[#1B1B1B]'}`}>
+                      {!isAdmin && (
+                        <p className="text-[11px] font-bold text-[#FF6B35] mb-0.5">{msg.senderName || 'Restaurante'}</p>
+                      )}
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                      <p className={`text-[10px] text-right mt-1 opacity-60 ${isAdmin ? 'text-[#1B1B1B]' : 'text-[#888]'}`}>
+                        {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="bg-[#F0F2F5] px-4 py-3 shrink-0">
+              <form onSubmit={sendChatMessage} className="flex gap-2 items-center">
+                <input 
+                  type="text" 
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Escribe un mensaje..."
+                  className="flex-1 bg-white border-none rounded-full px-4 py-3 text-[14px] outline-none shadow-sm text-[#1B1B1B]"
+                />
+                <button type="submit" disabled={!chatInput.trim()}
+                  className="w-11 h-11 rounded-full bg-[#00A884] flex items-center justify-center shrink-0 shadow-sm disabled:opacity-50 hover:bg-[#008f6f] transition-colors">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="white">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+                  </svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

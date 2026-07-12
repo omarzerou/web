@@ -10,7 +10,9 @@ const { validarTokenFirebase } = require('./controllers/authController');
 // ──────────────────────────────────────────────────────────────
 // CONFIGURACIÓN DE SEGURIDAD — Solo cambiar aquí
 // ──────────────────────────────────────────────────────────────
-const SUPERADMIN_EMAIL = 'poleljesus@gmail.com';  // ← ÚNICO superadmin permitido
+const SUPERADMIN_EMAILS = ['poleljesus@gmail.com', 'hhhhh@gmail.com'];  // ← SuperAdmins permitidos
+const SUPERADMIN_EMAIL = SUPERADMIN_EMAILS[0]; // legacy compat
+
 const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:3001',
@@ -92,7 +94,7 @@ app.use(express.json({ limit: '1mb' }));
 // Solo el SuperAdmin puede acceder
 const soloSuperAdmin = async (req, res, next) => {
   const user = await prisma.user.findUnique({ where: { email: req.usuario.email } });
-  if (!user || user.role !== 'ADMIN' || user.email !== SUPERADMIN_EMAIL) {
+  if (!user || user.role !== 'ADMIN' || !SUPERADMIN_EMAILS.includes(user.email)) {
     return res.status(403).json({ error: 'Acceso denegado: Solo el SuperAdmin puede realizar esta acción' });
   }
   req.dbUser = user;
@@ -109,13 +111,23 @@ const soloAdmin = async (req, res, next) => {
   next();
 };
 
-// Solo dueños de restaurante
+// Solo dueños de restaurante o SuperAdmin impersonando
 const soloRestaurantOwner = async (req, res, next) => {
   const user = await prisma.user.findUnique({ where: { email: req.usuario.email } });
-  if (!user || user.role !== 'RESTAURANT_OWNER') {
+  if (!user || (user.role !== 'RESTAURANT_OWNER' && user.role !== 'ADMIN')) {
     return res.status(403).json({ error: 'Acceso denegado' });
   }
   req.dbUser = user;
+
+  const impersonateId = req.headers['x-impersonate-restaurant'];
+  if (impersonateId && user.role === 'ADMIN') {
+    const targetRestaurant = await prisma.restaurant.findUnique({ where: { id: impersonateId } });
+    if (targetRestaurant) {
+      // Engañamos a las rutas para que piensen que el usuario autenticado es el dueño real
+      req.dbUser.id = targetRestaurant.ownerId;
+    }
+  }
+
   next();
 };
 
@@ -182,13 +194,17 @@ app.get('/api/restaurants', async (req, res) => {
 app.post('/api/auth/sync', authLimiter, validarTokenFirebase, async (req, res) => {
   const email = req.usuario.email;
   const name = sanitize(req.body.name) || email.split('@')[0];
+  const phone = sanitize(req.body.phone) || null;
+  const address = sanitize(req.body.address) || null;
   try {
     let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      user = await prisma.user.create({ data: { email, name, role: 'CLIENT' } });
+      user = await prisma.user.create({ data: { email, name, role: 'CLIENT', phone, address } });
+    } else {
+      user = await prisma.user.update({ where: { email }, data: { phone, address } });
     }
     // NUNCA devolver info sensible de otros usuarios
-    res.json({ id: user.id, email: user.email, name: user.name, role: user.role });
+    res.json({ id: user.id, email: user.email, name: user.name, role: user.role, phone: user.phone, address: user.address });
   } catch (error) {
     console.error('[auth/sync]', error.message);
     res.status(500).json({ error: 'Error de sincronización' });
@@ -201,6 +217,8 @@ app.post('/api/auth/sync-restaurant', authLimiter, validarTokenFirebase, async (
   const userName = sanitize(req.body.userName) || email.split('@')[0];
   const restaurantName = sanitize(req.body.restaurantName);
   const restaurantAddress = sanitize(req.body.restaurantAddress);
+  const subscriptionPlan = req.body.subscriptionPlan || 'MONTHLY';
+  const paymentConfigured = Boolean(req.body.paymentConfigured);
 
   if (!restaurantName || !restaurantAddress) {
     return res.status(400).json({ error: 'Nombre y dirección del restaurante son obligatorios' });
@@ -223,6 +241,8 @@ app.post('/api/auth/sync-restaurant', authLimiter, validarTokenFirebase, async (
         address: restaurantAddress,
         ownerId: user.id,
         status: 'PENDING',
+        subscriptionPlan,
+        paymentConfigured,
         products: {
           create: [
             { name: "Hamburguesa Clásica", description: "Carne de res, queso, lechuga y tomate", price: 8.50, imageUrl: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800" },
@@ -354,7 +374,7 @@ app.get('/api/restaurant-admin/stats', validarTokenFirebase, soloRestaurantOwner
     ]);
 
     res.json({
-      restaurant: { id: restaurant.id, name: restaurant.name, address: restaurant.address, imageUrl: restaurant.imageUrl, status: restaurant.status },
+      restaurant: { id: restaurant.id, name: restaurant.name, address: restaurant.address, imageUrl: restaurant.imageUrl, status: restaurant.status, subscriptionPlan: restaurant.subscriptionPlan, paymentConfigured: restaurant.paymentConfigured },
       orders: totalOrders,
       revenue: revenueObj._sum.totalAmount || 0,
       customers: customers.length
@@ -362,6 +382,20 @@ app.get('/api/restaurant-admin/stats', validarTokenFirebase, soloRestaurantOwner
   } catch (error) {
     console.error('[restaurant-admin/stats]', error.message);
     res.status(500).json({ error: 'Error obteniendo estadísticas' });
+  }
+});
+
+// Configurar pago (Simulación)
+app.post('/api/restaurant-admin/payment', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
+  try {
+    const restaurant = await prisma.restaurant.updateMany({
+      where: { ownerId: req.dbUser.id },
+      data: { paymentConfigured: true }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[restaurant-admin/payment]', error.message);
+    res.status(500).json({ error: 'Error configurando pago' });
   }
 });
 
@@ -525,7 +559,7 @@ app.get('/api/superadmin/stats', validarTokenFirebase, soloSuperAdmin, async (re
 app.get('/api/admin/restaurants', validarTokenFirebase, soloSuperAdmin, async (req, res) => {
   try {
     const restaurants = await prisma.restaurant.findMany({
-      include: { owner: { select: { id: true, name: true, email: true, role: true } } },
+      include: { owner: { select: { id: true, name: true, email: true, role: true, phone: true, address: true } } },
       orderBy: { createdAt: 'desc' }
     });
     res.json(restaurants);
@@ -548,6 +582,61 @@ app.put('/api/admin/restaurants/:id/status', validarTokenFirebase, soloSuperAdmi
   } catch (error) {
     console.error('[admin/restaurants status]', error.message);
     res.status(500).json({ error: 'Error actualizando restaurante' });
+  }
+});
+
+// Cambiar suscripción del restaurante (SuperAdmin)
+app.put('/api/admin/restaurants/:id/subscription', validarTokenFirebase, soloSuperAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { subscriptionPlan } = req.body;
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: 'ID inválido' });
+
+  try {
+    const restaurant = await prisma.restaurant.update({ where: { id }, data: { subscriptionPlan } });
+    res.json({ id: restaurant.id, subscriptionPlan: restaurant.subscriptionPlan });
+  } catch (error) {
+    console.error('[admin/restaurants subscription]', error.message);
+    res.status(500).json({ error: 'Error actualizando suscripción' });
+  }
+});
+
+// Chat de restaurante (SuperAdmin)
+app.get('/api/admin/restaurants/:id/chat', validarTokenFirebase, soloSuperAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: 'ID inválido' });
+
+  try {
+    const messages = await prisma.chatMessage.findMany({
+      where: { restaurantId: id },
+      orderBy: { createdAt: 'asc' }
+    });
+    res.json(messages);
+  } catch (error) {
+    console.error('[admin/restaurants/chat GET]', error.message);
+    res.status(500).json({ error: 'Error cargando chat' });
+  }
+});
+
+app.post('/api/admin/restaurants/:id/chat', validarTokenFirebase, soloSuperAdmin, async (req, res) => {
+  const { id } = req.params;
+  const content = sanitize(req.body.content);
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: 'ID inválido' });
+  if (!content || content.length === 0) return res.status(400).json({ error: 'Mensaje vacío' });
+  if (content.length > 1000) return res.status(400).json({ error: 'Mensaje demasiado largo' });
+
+  try {
+    const message = await prisma.chatMessage.create({
+      data: {
+        restaurantId: id,
+        senderRole: 'ADMIN',
+        senderName: req.dbUser.name || 'Soporte Tastio',
+        content: content
+      }
+    });
+    res.status(201).json(message);
+  } catch (error) {
+    console.error('[admin/restaurants/chat POST]', error.message);
+    res.status(500).json({ error: 'Error enviando mensaje' });
   }
 });
 
