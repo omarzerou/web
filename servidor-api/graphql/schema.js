@@ -102,12 +102,42 @@ const typeDefs = `
     nearByRestaurantsPreview(latitude: Float, longitude: Float, page: Int, limit: Int, shopType: String): NearByRestaurantsResponse
     recentOrderRestaurantsPreview(latitude: Float, longitude: Float): [RestaurantCarouselPreview]
     mostOrderedRestaurantsPreview(latitude: Float, longitude: Float, page: Int, limit: Int, shopType: String): [RestaurantCarouselPreview]
+    restaurantAdminDashboard(restaurantId: String!): Configuration
   }
 `;
 
 // Resolvers
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient({ log: ['error'] });
+
+// Función de utilidad para proteger resolvers en GraphQL
+const checkRestaurantOwnership = async (context, restaurantId) => {
+  if (!context.user) throw new Error("Acceso Denegado: Usuario no autenticado.");
+  
+  const dbUser = await prisma.user.findUnique({ where: { email: context.user.email } });
+  
+  if (!dbUser || dbUser.role === 'CLIENT') {
+    throw new Error("403 Forbidden: Los clientes no pueden consultar datos administrativos.");
+  }
+  
+  if (dbUser.role === 'RESTAURANT_OWNER') {
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+    if (!restaurant || restaurant.ownerId !== dbUser.id) {
+      throw new Error("403 Forbidden: No eres el dueño de este restaurante.");
+    }
+  }
+  // Si es ADMIN, tiene acceso total
+  return dbUser;
+};
+
 const resolvers = {
   Query: {
+    // Ejemplo de resolver protegido estrictamente
+    restaurantAdminDashboard: async (_, { restaurantId }, context) => {
+      await checkRestaurantOwnership(context, restaurantId);
+      // Retornar datos privados...
+      return { status: "Acceso Permitido", restaurantId };
+    },
     configuration: () => ({
       _id: "config-1",
       currency: "USD",

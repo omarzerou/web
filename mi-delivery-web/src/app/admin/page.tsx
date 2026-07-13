@@ -158,7 +158,8 @@ export default function AdminPage() {
           setShowSetupWizard(true);
         }
       } else if (resStats.status === 403) {
-        router.push("/superadmin");
+        alert("Acceso Denegado: No tienes permisos para acceder al panel de administración de este restaurante.");
+        router.push("/");
         return;
       }
       if (resOrders.ok) setOrders(await resOrders.json());

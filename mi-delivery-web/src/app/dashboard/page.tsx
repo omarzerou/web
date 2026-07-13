@@ -48,6 +48,10 @@ export default function ProfessionalDashboard() {
       });
       if (res.ok) {
         setRestaurant(await res.json());
+      } else if (res.status === 403) {
+        alert("Acceso Denegado: No tienes permisos de administrador.");
+        router.push("/");
+        return;
       }
     } catch (error) {
       console.error(error);
