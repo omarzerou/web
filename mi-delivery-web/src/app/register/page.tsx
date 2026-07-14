@@ -45,6 +45,16 @@ export default function RegisterPage() {
   const [loading,     setLoading]     = useState(false);
   const [googleLoad,  setGoogleLoad]  = useState(false);
 
+  // ── Leer query params ──
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const search = new URLSearchParams(window.location.search);
+      if (search.get("tab") === "restaurante") {
+        setTab("restaurante");
+      }
+    }
+  }, []);
+
   // ── Handle redirect login (Mobile) ──
   useEffect(() => {
     // Legacy redirect support if any redirects are pending
@@ -124,7 +134,7 @@ export default function RegisterPage() {
       if (!res.ok) throw new Error("Error registrando restaurante en el servidor");
 
       alert("¡Solicitud enviada! Tu restaurante está en revisión por un administrador.");
-      router.push("/dashboard");
+      router.push("/admin");
     } catch (err: any) {
       setError(err.code === "auth/email-already-in-use"
         ? "Ese correo ya está registrado"

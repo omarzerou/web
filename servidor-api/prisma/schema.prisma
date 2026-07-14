@@ -24,6 +24,7 @@ model User {
 
   restaurants Restaurant[]
   orders      Order[]
+  reviews     Review[]
 }
 
 model Restaurant {
@@ -41,6 +42,7 @@ model Restaurant {
   products    Product[]
   orders      Order[]
   chatMessages ChatMessage[]
+  reviews     Review[]
 
   subscriptionPlan String @default("FREE")
   paymentConfigured Boolean @default(false)
@@ -50,6 +52,8 @@ model Restaurant {
   minOrder       Float @default(0)
   coverageRadius Float @default(0)
   bufferTime     Int   @default(30)
+  lat            Float?
+  lng            Float?
 }
 
 model Product {
@@ -66,19 +70,21 @@ model Product {
   category     String?
   isOutofStock Boolean    @default(false)
   isFeatured   Boolean    @default(false)
+  sectionsData String?
 
   orderItems   OrderItem[]
 }
 
 model Order {
   id            String   @id @default(uuid())
+  orderType     String   @default("DELIVERY")
   totalAmount   Float
   status        String   @default("PENDING")
   paymentMethod String
-  deliveryAddress String
+  deliveryAddress String?
 
-  clientId      String
-  client        User     @relation(fields: [clientId], references: [id])
+  clientId      String?
+  client        User?    @relation(fields: [clientId], references: [id])
   
   restaurantId  String
   restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
@@ -122,4 +128,15 @@ model PlatformConfig {
   pushNotifications  Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+}
+
+model Review {
+  id           String     @id @default(uuid())
+  rating       Int
+  comment      String?
+  clientId     String
+  client       User       @relation(fields: [clientId], references: [id])
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
 }

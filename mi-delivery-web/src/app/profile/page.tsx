@@ -216,6 +216,42 @@ export default function ProfilePage() {
   const [favRests, setFavRests]= useState<any[]>([]);
   const router = useRouter();
 
+  // Estados de reseña
+  const [reviewOrder, setReviewOrder] = useState<any>(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+
+  const submitReview = async () => {
+    if (!reviewOrder || submittingReview) return;
+    setSubmittingReview(true);
+    try {
+      const token = await user?.getIdToken();
+      const res = await fetch("http://localhost:4000/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({
+          restaurantId: reviewOrder.restaurantId,
+          rating: reviewRating,
+          comment: reviewComment
+        })
+      });
+      if (res.ok) {
+        alert("¡Reseña enviada con éxito!");
+        setReviewOrder(null);
+        setReviewRating(5);
+        setReviewComment("");
+      } else {
+        const error = await res.json();
+        alert(error.error || "Error al enviar la reseña");
+      }
+    } catch (e: any) {
+      alert("Error de red al enviar la reseña");
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async u => {
       if (!u) { router.push("/login"); return; }
@@ -376,10 +412,6 @@ export default function ProfilePage() {
                   </div>
                 )}
               </div>
-              <button onClick={() => { signOut(auth); router.push("/"); }}
-                className="flex items-center gap-1.5 text-[13px] font-semibold text-red-400 hover:text-red-500 hover:bg-red-50 px-3 py-2 rounded-xl border-none bg-transparent cursor-pointer transition-colors">
-                <LogOut className="w-4 h-4" /> Cerrar sesión
-              </button>
             </div>
 
             <h1 className="text-[22px] font-extrabold text-[#1B1B1B] leading-tight">
@@ -463,9 +495,16 @@ export default function ProfilePage() {
                        <div className="text-[12px] text-[#888]">{new Date(o.createdAt).toLocaleDateString()} · {o.items?.length} items</div>
                      </div>
                   </div>
-                  <div className="mt-3 sm:mt-0 flex flex-row sm:flex-col items-center sm:items-end justify-between">
-                     <div className="text-[16px] font-extrabold text-[#FF6B35]">€{o.totalAmount.toFixed(2)}</div>
-                     <div className="text-[11px] font-bold px-2 py-1 bg-green-100 text-green-600 rounded-md mt-1 uppercase tracking-wider">{o.status}</div>
+                  <div className="mt-3 sm:mt-0 flex flex-col items-start sm:items-end justify-between gap-2">
+                     <div className="flex flex-row sm:flex-col items-center sm:items-end gap-3 w-full justify-between">
+                       <div className="text-[16px] font-extrabold text-[#FF6B35]">€{o.totalAmount.toFixed(2)}</div>
+                       <div className="text-[11px] font-bold px-2 py-1 bg-green-100 text-green-600 rounded-md mt-1 uppercase tracking-wider">{o.status}</div>
+                     </div>
+                     {o.status === "DELIVERED" && (
+                       <button onClick={() => setReviewOrder(o)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
+                         <Star className="w-3.5 h-3.5 fill-current" /> Dejar una reseña
+                       </button>
+                     )}
                   </div>
                 </div>
               ))}
@@ -519,6 +558,51 @@ export default function ProfilePage() {
         </div>
 
       </div>
+
+      <div className="text-center pb-12 mt-12">
+        <button onClick={() => { signOut(auth); router.push("/"); }} className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-red-50 text-red-600 font-bold text-[14px] hover:bg-red-100 transition-colors">
+          <LogOut className="w-4 h-4" /> Cerrar sesión
+        </button>
+      </div>
+
+      {/* Modal de reseña */}
+      {reviewOrder && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-[20px] font-extrabold text-[#1B1B1B]">Reseña para {reviewOrder.restaurant?.name || 'Restaurante'}</h3>
+              <button onClick={() => setReviewOrder(null)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="mb-6 flex justify-center gap-2">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button key={star} onClick={() => setReviewRating(star)} className="focus:outline-none transition-transform hover:scale-110">
+                  <Star className={`w-10 h-10 ${star <= reviewRating ? "text-[#FFBE00] fill-[#FFBE00]" : "text-[#E0E0E0]"}`} />
+                </button>
+              ))}
+            </div>
+
+            <div className="mb-6">
+              <label className="text-[12px] font-bold text-[#AAAAAA] uppercase tracking-wider block mb-2">Comentario (Opcional)</label>
+              <textarea
+                value={reviewComment}
+                onChange={e => setReviewComment(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-[#F0F0F0] text-[14px] outline-none focus:border-[#FF6B35] resize-none"
+                rows={3}
+                placeholder="¿Qué te pareció la comida?"
+              />
+            </div>
+
+            <button onClick={submitReview} disabled={submittingReview}
+              className="w-full py-3 rounded-xl text-white font-bold text-[15px] disabled:opacity-50 transition-all hover:opacity-90"
+              style={{ background: GRADIENT }}>
+              {submittingReview ? "Enviando..." : "Enviar Reseña"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');

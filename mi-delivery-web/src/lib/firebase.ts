@@ -16,4 +16,10 @@ const firebaseConfig = {
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-export { app, auth };
+const adminApp = getApps().find(a => a.name === "admin") || initializeApp(firebaseConfig, "admin");
+const adminAuth = getAuth(adminApp);
+
+const superAdminApp = getApps().find(a => a.name === "superadmin") || initializeApp(firebaseConfig, "superadmin");
+const superAdminAuth = getAuth(superAdminApp);
+
+export { app, auth, adminAuth, superAdminAuth };

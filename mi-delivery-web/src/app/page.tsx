@@ -31,16 +31,6 @@ const CATEGORIES = [
 // Duplicated to give enough items for the carousel to scroll
 const CAROUSEL_ITEMS = [...CATEGORIES, ...CATEGORIES];
 
-const DEMO_RESTAURANTS = [
-  { id: "demo1", name: "McDonald's | Centro",  description: "I'm Lovin' it",                             deliveryTime: "10-20", rating: "8.0", deliveryCost: "€0.00", priceLevel: "€€",  img: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=640&h=400&fit=crop", badge: "5€ dto" },
-  { id: "demo2", name: "Chinacy",               description: "Cocina china auténtica",                   deliveryTime: "15-25", rating: "9.2", deliveryCost: "€0.00", priceLevel: "€€€", img: "https://images.unsplash.com/photo-1563245372-f21724e3856d?w=640&h=400&fit=crop", badge: "20% dto" },
-  { id: "demo3", name: "Five Guys Burguer",     description: "Hamburguesas artesanas desde 1986",         deliveryTime: "15-25", rating: "9.4", deliveryCost: "€0.00", priceLevel: "€€€", img: "https://images.unsplash.com/photo-1586816001966-79b736744398?w=640&h=400&fit=crop", badge: "5€ dto" },
-  { id: "demo4", name: "Spicy Sichuan",         description: "Alta cocina picante, servida con alma",     deliveryTime: "25-35", rating: "9.4", deliveryCost: "€0.00", priceLevel: "€€€", img: "https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?w=640&h=400&fit=crop", badge: "5€ dto" },
-  { id: "demo5", name: "Taste of India",        description: "Auténtica cocina india con especias frescas", deliveryTime: "20-30", rating: "9.0", deliveryCost: "€0.00", priceLevel: "€€",  img: "https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=640&h=400&fit=crop", badge: "5€ dto" },
-  { id: "demo6", name: "Vapiano Algeciras",     description: "Pasta casera, pizza aromática y crujiente", deliveryTime: "15-25", rating: "8.4", deliveryCost: "€0.00", priceLevel: "€€€", img: "https://images.unsplash.com/photo-1481931098730-318b6f776db0?w=640&h=400&fit=crop", badge: "5€ dto" },
-  { id: "demo7", name: "Paloma Blanca",         description: "Comida para llevar (100% Halal)",              deliveryTime: "10-20", rating: "9.5", deliveryCost: "€0.00", priceLevel: "€",   img: "https://images.unsplash.com/photo-1529543544282-ea669407fca3?w=640&h=400&fit=crop", badge: "100% Halal" },
-  { id: "demo8", name: "Tokyo Sushi",           description: "Sushi y rolls artesanos al momento",       deliveryTime: "20-35", rating: "9.1", deliveryCost: "€0.00", priceLevel: "€€€", img: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=640&h=400&fit=crop", badge: "5€ dto" },
-];
 
 const CAT_GRID = [
   { name: "Street Food", desc: "30 locales",  img: "https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=600&h=400&fit=crop" },
@@ -57,6 +47,14 @@ const CAT_GRID = [
 function RestaurantCard({ rest }: { rest: any }) {
   const href = `/restaurant/${rest.id}`;
   const imgSrc = rest.img || rest.imageUrl || "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=640&h=400&fit=crop";
+
+  let displayRating = rest.rating || "9.0";
+  let reviewCount = 0;
+  if (rest.reviews && rest.reviews.length > 0) {
+    const sum = rest.reviews.reduce((acc: number, rev: any) => acc + rev.rating, 0);
+    displayRating = (sum / rest.reviews.length).toFixed(1);
+    reviewCount = rest.reviews.length;
+  }
 
   return (
     <Link href={href} className="block bg-white rounded-2xl overflow-hidden border border-[#EFEFEF] shadow-sm hover:shadow-[0_8px_32px_rgba(0,0,0,0.10)] hover:-translate-y-1 transition-all duration-300 group">
@@ -95,7 +93,7 @@ function RestaurantCard({ rest }: { rest: any }) {
           <span className="text-[#DDD]">·</span>
           <span>{rest.priceLevel || "€€€"}</span>
           <span className="text-[#DDD]">·</span>
-          <span>😊 {rest.rating || "9.0"}</span>
+          <span className="flex items-center gap-1">⭐ {displayRating} {reviewCount > 0 && <span className="font-normal text-[10px]">({reviewCount})</span>}</span>
         </div>
       </div>
     </Link>
@@ -104,7 +102,7 @@ function RestaurantCard({ rest }: { rest: any }) {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const [restaurants, setRestaurants] = useState<any[]>(DEMO_RESTAURANTS);
+  const [restaurants, setRestaurants] = useState<any[]>([]);
   const [loading, setLoading]         = useState(true);
   const [user, setUser]               = useState<any>(null);
   const [query, setQuery]             = useState("");
@@ -160,17 +158,21 @@ export default function HomePage() {
 
   // ── restaurants ──
   useEffect(() => {
-    try {
-      const localStr = localStorage.getItem("tastio_restaurants");
-      const local = localStr ? JSON.parse(localStr) : [];
-      if (Array.isArray(local) && local.length > 0) {
-        setRestaurants([...local, ...DEMO_RESTAURANTS]);
+    const fetchRestaurants = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch("http://localhost:4000/api/restaurants");
+        if (res.ok) {
+          const data = await res.json();
+          setRestaurants(data);
+        }
+      } catch (e) {
+        console.error("Error fetching restaurants", e);
+      } finally {
+        setLoading(false);
       }
-    } catch (e) {
-      console.error("Error loading local restaurants", e);
-    } finally {
-      setLoading(false);
-    }
+    };
+    fetchRestaurants();
   }, []);
 
   // ── drag-to-scroll for carousel (window-level so drag works anywhere) ──

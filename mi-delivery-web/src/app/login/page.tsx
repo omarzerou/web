@@ -8,12 +8,15 @@ import {
   getRedirectResult,
   GoogleAuthProvider,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, adminAuth, superAdminAuth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Mail, Lock, ArrowRight } from "lucide-react";
 
+type Tab = "cliente" | "restaurante";
+
 export default function LoginPage() {
+  const [tab, setTab]           = useState<Tab>("cliente");
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -37,12 +40,22 @@ export default function LoginPage() {
   };
 
   const redirectBasedOnRole = (user: any) => {
-    if (user?.role === "ADMIN" || user?.role === "RESTAURANT_OWNER") {
+    if (tab === "restaurante") {
       router.push("/admin");
     } else {
       router.push("/");
     }
   };
+
+  // ── Leer query params ──
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const search = new URLSearchParams(window.location.search);
+      if (search.get("tab") === "restaurante") {
+        setTab("restaurante");
+      }
+    }
+  }, []);
 
   // ── Handle redirect login (Mobile) ──
   useEffect(() => {
@@ -63,6 +76,10 @@ export default function LoginPage() {
     setError("");
     try {
       const cred  = await signInWithEmailAndPassword(auth, email, password);
+      // Mantener sincronizadas las otras apps
+      signInWithEmailAndPassword(adminAuth, email, password).catch(()=>{});
+      signInWithEmailAndPassword(superAdminAuth, email, password).catch(()=>{});
+      
       const token = await cred.user.getIdToken();
       const dbUser = await syncBackend(token, email);
       redirectBasedOnRole(dbUser);
@@ -79,6 +96,15 @@ export default function LoginPage() {
     try {
       const provider = new GoogleAuthProvider();
       const cred     = await signInWithPopup(auth, provider);
+      
+      const credential = GoogleAuthProvider.credentialFromResult(cred);
+      if (credential) {
+        import("firebase/auth").then(({ signInWithCredential }) => {
+          signInWithCredential(adminAuth, credential).catch(()=>{});
+          signInWithCredential(superAdminAuth, credential).catch(()=>{});
+        });
+      }
+
       const token    = await cred.user.getIdToken();
       const dbUser = await syncBackend(token, cred.user.email || "");
       redirectBasedOnRole(dbUser);
@@ -105,10 +131,26 @@ export default function LoginPage() {
         <h1 className="text-[24px] font-extrabold text-[#1B1B1B] mb-1 tracking-tight">Acceder</h1>
         <p className="text-[14px] text-[#888] mb-7">
           ¿No tienes cuenta?{" "}
-          <Link href="/register" className="text-[#FF6B35] font-semibold no-underline hover:underline">
+          <Link href={`/register?tab=${tab}`} className="text-[#FF6B35] font-semibold no-underline hover:underline">
             Regístrate
           </Link>
         </p>
+
+        {/* TAB TOGGLE */}
+        <div className="flex bg-[#F0F0F0] rounded-2xl p-1 mb-6">
+          {(["cliente", "restaurante"] as Tab[]).map(t => (
+            <button key={t} onClick={() => { setTab(t); setError(""); }}
+              className="flex-1 py-2.5 rounded-xl text-[13px] font-bold transition-all cursor-pointer border-none"
+              style={{
+                background: tab === t ? "#fff" : "transparent",
+                color: tab === t ? "#1B1B1B" : "#888",
+                boxShadow: tab === t ? "0 1px 6px rgba(0,0,0,0.10)" : "none",
+              }}
+            >
+              {t === "cliente" ? "👤 Cliente" : "🏪 Restaurante"}
+            </button>
+          ))}
+        </div>
 
         {/* Google button */}
         <button

@@ -8,10 +8,13 @@ import {
   BarChart2, Check, X, MapPin, Star, Calendar, Store, TrendingUp,
   Plus, Trash2, Package, Image as ImageIcon, Eye, Globe, Shield, MessageCircle, Send, Settings
 } from "lucide-react";
-import { auth } from "@/lib/firebase";
+import { superAdminAuth as auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import dynamic from "next/dynamic";
+
+const MapView = dynamic(() => import("../mapa/MapView"), { ssr: false });
 
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 const KPICard = ({ title, value, trend, color, icon }: any) => (
@@ -27,7 +30,7 @@ const KPICard = ({ title, value, trend, color, icon }: any) => (
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function SuperAdminPage() {
-  const [activeTab, setActiveTab] = useState("Solicitudes");
+  const [activeTab, setActiveTab] = useState("Resumen");
   const [stats, setStats] = useState<any>({ users: 0, restaurants: 0, orders: 0, revenue: 0 });
   const [restaurantsList, setRestaurantsList] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
@@ -77,14 +80,16 @@ export default function SuperAdminPage() {
 
   const timeFilters = ["Diario", "Semanal", "Mensual", "Anual"];
 
-  const fetchData = async (user: any) => {
+  const userRef = useRef<any>(null);
+
+  const fetchData = useCallback(async (user: any) => {
     setFetchError("");
     try {
       const token = await user.getIdToken();
       const [resStats, resRest, resOrders, resCust, resConfig] = await Promise.all([
         fetch("http://localhost:4000/api/superadmin/stats", { headers: { "Authorization": `Bearer ${token}` } }),
         fetch("http://localhost:4000/api/admin/restaurants", { headers: { "Authorization": `Bearer ${token}` } }),
-        fetch("http://localhost:4000/api/superadmin/orders", { headers: { "Authorization": `Bearer ${token}` } }),
+        fetch("http://localhost:4000/api/superadmin/all-orders", { headers: { "Authorization": `Bearer ${token}` } }),
         fetch("http://localhost:4000/api/superadmin/customers", { headers: { "Authorization": `Bearer ${token}` } }),
         fetch("http://localhost:4000/api/superadmin/settings", { headers: { "Authorization": `Bearer ${token}` } }),
       ]);
@@ -109,7 +114,7 @@ export default function SuperAdminPage() {
     } catch (e) {
       setFetchError("Error de conexión con el servidor. ¿Está corriendo el backend?");
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Si entramos al superadmin, limpiamos cualquier suplantación
@@ -119,10 +124,21 @@ export default function SuperAdminPage() {
       if (!user) { router.push("/login"); return; }
       setIsAuthorized(true);
       setCurrentUserEmail(user.email || "");
+      userRef.current = user;
       fetchData(user);
     });
     return () => unsub();
-  }, [router]);
+  }, [router, fetchData]);
+
+  // Auto-actualizar cada 5 segundos
+  useEffect(() => {
+    if (isAuthorized) {
+      const interval = setInterval(() => {
+        if (userRef.current) fetchData(userRef.current);
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthorized, fetchData]);
 
   const updateRestaurantStatus = async (id: string, status: string) => {
     try {
@@ -359,6 +375,7 @@ export default function SuperAdminPage() {
   );
 
   const MENU = [
+    { id: "Resumen", icon: <LayoutDashboard className="w-5 h-5"/>, label: "Resumen" },
     { id: "Solicitudes", icon: <Store className="w-5 h-5"/>, label: "Solicitudes" },
     { id: "Estadísticas", icon: <BarChart2 className="w-5 h-5"/>, label: "Estadísticas" },
     { id: "Restaurantes", icon: <Globe className="w-5 h-5"/>, label: "Restaurantes" },
@@ -369,9 +386,34 @@ export default function SuperAdminPage() {
     { id: "Configuración", icon: <Settings className="w-5 h-5"/>, label: "Configuración" },
   ];
 
+  const mapRestaurants = restaurantsList.map((r, i) => ({
+    id: r.id,
+    name: r.name,
+    category: "Todos",
+    lat: r.lat || (36.13 + (i * 0.005) * (i % 2 === 0 ? 1 : -1)),
+    lng: r.lng || (-5.45 + (i * 0.005) * (i % 3 === 0 ? 1 : -1)),
+    description: r.description || "",
+    address: r.address || "",
+    img: r.imageUrl || "",
+    deliveryTime: "30 min",
+    rating: "4.5",
+    priceLevel: "2"
+  }));
+
   const pendingRestaurants = restaurantsList.filter(r => r.status === 'PENDING');
   const approvedRestaurants = restaurantsList.filter(r => r.status === 'APPROVED');
   const rejectedRestaurants = restaurantsList.filter(r => r.status === 'REJECTED');
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center" style={{ fontFamily: "'Inter', sans-serif" }}>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-[#FF6B35] border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-[#1A202C] font-bold text-[14px]">Verificando acceso de SuperAdmin...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] flex text-[#2D3748]" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -457,6 +499,32 @@ export default function SuperAdminPage() {
                   className="mt-3 text-[13px] font-bold text-red-700 underline hover:no-underline">
                   Reintentar →
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* ─── RESUMEN ─── */}
+          {!fetchError && activeTab === "Resumen" && (
+            <div className="mt-6 space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-[22px] font-extrabold text-[#1A202C]">Resumen</h2>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <KPICard title="Usuarios Registrados" value={stats.users || 0} trend="+12%" color="#EBF4FF" icon={<Users className="w-5 h-5 text-blue-500" />} />
+                <KPICard title="Restaurantes" value={restaurantsList.length} trend="+5%" color="#E6FFFA" icon={<Store className="w-5 h-5 text-teal-500" />} />
+                <KPICard title="Pedidos Procesados" value={stats.orders || 0} trend="+18%" color="#FEFCBF" icon={<ShoppingBag className="w-5 h-5 text-yellow-500" />} />
+                <KPICard title="Ingresos Generados" value={`€${(stats.revenue || 0).toFixed(2)}`} trend="+22%" color="#C6F6D5" icon={<TrendingUp className="w-5 h-5 text-green-500" />} />
+              </div>
+              <div className="bg-white p-6 rounded-3xl border border-[#F0F2F5] shadow-sm">
+                <h3 className="text-[16px] font-extrabold text-[#1A202C] mb-4">Mapa de Restaurantes Registrados</h3>
+                <div style={{ height: "400px", borderRadius: "16px", overflow: "hidden", zIndex: 0 }}>
+                  <MapView 
+                    restaurants={mapRestaurants} 
+                    selected={null} 
+                    onSelect={() => {}} 
+                    center={[36.13, -5.45]} 
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -981,6 +1049,54 @@ export default function SuperAdminPage() {
                     </>
                   )}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── PEDIDOS GLOBALES ─── */}
+          {!fetchError && activeTab === "Pedidos" && (
+            <div className="mt-6 space-y-6">
+              <div>
+                <h2 className="text-[22px] font-extrabold text-[#1A202C]">Pedidos Globales</h2>
+                <p className="text-[13px] text-[#A0AEC0]">Monitoreo de todos los pedidos de la plataforma</p>
+              </div>
+              <div className="bg-white rounded-3xl border border-[#F0F2F5] shadow-sm overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-[#F8F9FA] text-[#A0AEC0] text-[12px] font-bold uppercase tracking-wider border-b border-[#F0F2F5]">
+                      <th className="p-4">ID</th>
+                      <th className="p-4">Restaurante</th>
+                      <th className="p-4">Cliente</th>
+                      <th className="p-4">Fecha</th>
+                      <th className="p-4">Monto</th>
+                      <th className="p-4">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((o: any) => (
+                      <tr key={o.id} className="border-b border-[#F0F2F5] hover:bg-[#F8F9FA] transition-colors">
+                        <td className="p-4 font-mono text-[13px] text-[#718096]">#{o.id.substring(0,8)}</td>
+                        <td className="p-4 text-[14px] font-bold text-[#1A202C]">{o.restaurant?.name || "N/A"}</td>
+                        <td className="p-4 text-[13px] text-[#4A5568]">{o.client?.name || o.client?.email || "Cliente"}</td>
+                        <td className="p-4 text-[13px] text-[#718096]">{new Date(o.createdAt).toLocaleString('es-ES')}</td>
+                        <td className="p-4 text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</td>
+                        <td className="p-4 text-[12px] font-bold">
+                          <span className={`px-2 py-1 rounded-full ${
+                            o.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
+                            o.status === 'PREPARING' ? 'bg-blue-100 text-blue-700' :
+                            o.status === 'ON_THE_WAY' ? 'bg-purple-100 text-purple-700' :
+                            o.status === 'DELIVERED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {o.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {orders.length === 0 && (
+                      <tr><td colSpan={6} className="p-8 text-center text-[#A0AEC0]">No hay pedidos registrados</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
