@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { DB, Product, RestInfo, CartItem } from "@/lib/demo-data";
+import { Product, RestInfo, CartItem } from "@/lib/types";
 import { ArrowLeft, Check, X, Plus, Minus, Printer, Banknote, CreditCard, Trash2, Search } from "lucide-react";
 import Link from "next/link";
 
@@ -110,7 +110,36 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
   const [cashGiven, setCashGiven] = useState<string>("");
 
   useEffect(() => {
-    setRest(DB[id] || null);
+    fetch("http://localhost:4000/api/restaurants")
+      .then(res => res.json())
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        const apiRest = data.find((r: any) => r.id === id);
+        if (apiRest) {
+          const categories = Array.from(new Set(apiRest.products.map((p: any) => p.category || "Sin Categoría")));
+          const menu = categories.map((catName, idx) => ({
+            id: `cat_${idx}`,
+            name: catName as string,
+            items: apiRest.products.filter((p: any) => (p.category || "Sin Categoría") === catName).map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              desc: p.description || "",
+              price: p.price,
+              img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
+              sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
+            }))
+          }));
+          setRest({
+            id,
+            name: apiRest.name,
+            tagline: apiRest.address || "Local asociado a Tastio",
+            heroImg: apiRest.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
+            time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
+            menu
+          });
+        }
+      })
+      .catch(console.error);
   }, [id]);
 
   if (!rest) return <div className="min-h-screen bg-[#F0F0F0] flex items-center justify-center font-bold">Cargando TPV...</div>;

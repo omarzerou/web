@@ -13,6 +13,7 @@ import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import AdminTPV from "@/components/AdminTPV";
 
 // ─── TRADUCCIONES ─────────────────────────────────────────────────────────────
 const getHeaders = (token: string, isJson: boolean = false) => {
@@ -199,6 +200,27 @@ export default function AdminPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  // ─── TIME HELPERS ─────────────────────────────────────────────────────────
+  const formatOrderTime = (createdAt: string) => {
+    if (!createdAt) return "--:--";
+    const date = new Date(createdAt);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const getDelayInfo = (createdAt: string, bufferTime: number) => {
+    if (!createdAt) return { text: "Calculando...", isDelayed: false };
+    const orderTime = new Date(createdAt).getTime();
+    const estimatedTime = orderTime + bufferTime * 60000;
+    const now = Date.now();
+    const diffMinutes = Math.floor((now - estimatedTime) / 60000);
+    
+    if (diffMinutes > 0) {
+      return { text: `Retraso: +${diffMinutes} min`, isDelayed: true };
+    } else {
+      return { text: `Quedan: ${Math.abs(diffMinutes)} min`, isDelayed: false };
+    }
+  };
 
   // ─── HANDLERS ─────────────────────────────────────────────────────────────
 
@@ -459,6 +481,7 @@ export default function AdminPage() {
   const MENU = [
     { id: "Resumen", icon: <LayoutDashboard className="w-5 h-5" /> },
     { id: "Pedidos", icon: <ShoppingBag className="w-5 h-5" /> },
+    { id: "TPV", icon: <Package className="w-5 h-5" /> },
     { id: "Catálogo", icon: <LayoutGrid className="w-5 h-5" /> },
     { id: "Estadísticas", icon: <BarChart2 className="w-5 h-5" /> },
     { id: "Reseñas", icon: <Star className="w-5 h-5" /> },
@@ -708,6 +731,13 @@ export default function AdminPage() {
             </div>
           )}
 
+          {/* ─── TPV ─── */}
+          {activeTab === "TPV" && (
+            <div className="mt-6 flex flex-col h-full min-h-[600px] -mx-6 -mb-6">
+              <AdminTPV restaurant={restaurant} products={products} />
+            </div>
+          )}
+
           {/* ─── PEDIDOS (KANBAN) ─── */}
           {activeTab === "Pedidos" && (
             <div className="mt-6 flex flex-col h-full min-h-[500px]">
@@ -722,18 +752,26 @@ export default function AdminPage() {
                     <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span> Pendientes ({orders.filter((o:any)=>o.status==='PENDING').length})
                   </h3>
                   <div className="space-y-3">
-                    {orders.filter((o:any)=>o.status==='PENDING').map((o:any) => (
-                      <div key={o.id} className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                    {orders.filter((o:any)=>o.status==='PENDING').map((o:any) => {
+                      const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
+                      return (
+                      <div key={o.id} className={`bg-white p-4 rounded-2xl shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'}`}>
                         <div className="flex justify-between items-start mb-2">
                           <span className="font-mono text-[12px] font-bold text-[#718096]">#{o.id.substring(0,8)}</span>
                           <span className="text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</span>
                         </div>
-                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email}</p>
+                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email || "Cliente"}</p>
+                        
+                        <div className="flex justify-between items-center mt-2 px-2 py-1.5 bg-[#F8F9FA] rounded-lg">
+                           <span className="text-[11px] font-bold text-[#718096]">Pedido: {formatOrderTime(o.createdAt)}</span>
+                           <span className={`text-[11px] font-black ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>{timeInfo.text}</span>
+                        </div>
+
                         <div className="mt-3">
                           <button onClick={() => handleUpdateOrderStatus(o.id, 'PREPARING')} className="w-full bg-[#FF6B35] text-white text-[12px] font-bold py-2 rounded-xl hover:bg-[#e55a25] transition-colors">Empezar a preparar</button>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
                 {/* Columna Preparando */}
@@ -742,18 +780,27 @@ export default function AdminPage() {
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-400"></span> Preparando ({orders.filter((o:any)=>o.status==='PREPARING').length})
                   </h3>
                   <div className="space-y-3">
-                    {orders.filter((o:any)=>o.status==='PREPARING').map((o:any) => (
-                      <div key={o.id} className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                    {orders.filter((o:any)=>o.status==='PREPARING').map((o:any) => {
+                      const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
+                      return (
+                      <div key={o.id} className={`bg-white p-4 rounded-2xl shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'}`}>
                         <div className="flex justify-between items-start mb-2">
                           <span className="font-mono text-[12px] font-bold text-[#718096]">#{o.id.substring(0,8)}</span>
                           <span className="text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</span>
                         </div>
-                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email}</p>
+                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email || "Cliente"}</p>
+                        
+                        <div className="flex justify-between items-center mt-2 px-2 py-1.5 bg-[#F8F9FA] rounded-lg">
+                           <span className="text-[11px] font-bold text-[#718096]">Pedido: {formatOrderTime(o.createdAt)}</span>
+                           <span className={`text-[11px] font-black ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>{timeInfo.text}</span>
+                        </div>
+
                         <div className="mt-3 flex gap-2">
+                          <button onClick={() => handleUpdateOrderStatus(o.id, 'PENDING')} className="px-3 bg-[#F0F2F5] text-[#718096] text-[12px] font-bold py-2 rounded-xl hover:bg-[#E2E8F0] transition-colors">Atrás</button>
                           <button onClick={() => handleUpdateOrderStatus(o.id, 'ON_THE_WAY')} className="flex-1 bg-blue-100 text-blue-700 text-[12px] font-bold py-2 rounded-xl hover:bg-blue-200 transition-colors">Listo (En Camino)</button>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
                 {/* Columna Listos / Entregados */}
@@ -762,20 +809,29 @@ export default function AdminPage() {
                     <span className="w-2.5 h-2.5 rounded-full bg-green-400"></span> Enviados / Listos ({orders.filter((o:any)=>['ON_THE_WAY', 'DELIVERED'].includes(o.status)).length})
                   </h3>
                   <div className="space-y-3 opacity-70">
-                    {orders.filter((o:any)=>['ON_THE_WAY', 'DELIVERED'].includes(o.status)).map((o:any) => (
-                      <div key={o.id} className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                    {orders.filter((o:any)=>['ON_THE_WAY', 'DELIVERED'].includes(o.status)).map((o:any) => {
+                      const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
+                      return (
+                      <div key={o.id} className={`bg-white p-4 rounded-2xl shadow-sm border ${o.status === 'DELIVERED' ? 'opacity-60 grayscale' : 'border-[#E2E8F0]'}`}>
                         <div className="flex justify-between items-start mb-2">
                           <span className="font-mono text-[12px] font-bold text-[#718096]">#{o.id.substring(0,8)}</span>
                           <span className="text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</span>
                         </div>
-                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email}</p>
-                        {o.status === 'ON_THE_WAY' && (
-                           <div className="mt-3">
+                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email || "Cliente"}</p>
+                        
+                        <div className="flex justify-between items-center mt-2 px-2 py-1.5 bg-[#F8F9FA] rounded-lg">
+                           <span className="text-[11px] font-bold text-[#718096]">Pedido: {formatOrderTime(o.createdAt)}</span>
+                        </div>
+
+                        <div className="mt-3">
+                          {o.status === 'ON_THE_WAY' ? (
                              <button onClick={() => handleUpdateOrderStatus(o.id, 'DELIVERED')} className="w-full bg-green-100 text-green-700 text-[12px] font-bold py-2 rounded-xl hover:bg-green-200 transition-colors">Marcar Entregado</button>
-                           </div>
-                        )}
+                          ) : (
+                             <div className="w-full bg-[#F0F2F5] text-[#718096] text-center text-[12px] font-bold py-2 rounded-xl">Entregado</div>
+                          )}
+                        </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
               </div>

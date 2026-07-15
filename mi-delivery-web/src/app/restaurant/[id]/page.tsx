@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Heart, ShoppingBag, Plus, Minus, X, Check, Clock, Star, MapPin, Search } from "lucide-react";
 
-import { Option, SecDef, Product, MenuCat, RestInfo, CartItem, DB, BURGER_SECS } from "@/lib/demo-data";
+import { Option, SecDef, Product, MenuCat, RestInfo, CartItem } from "@/lib/types";
 
 // ── CUSTOMIZATION MODAL ───────────────────────────────────────────────────────
 function CustomModal({ product, restId, restName, onClose, onAdd }: {
@@ -245,7 +245,7 @@ const setCart = (cart: CartItem[]) => {
 export default function RestaurantPage() {
   const params  = useParams<{ id: string }>();
   const id      = params.id;
-  const [rest, setRest] = useState<RestInfo | null>(DB[id] || null);
+  const [rest, setRest] = useState<RestInfo | null>(null);
   const [cart, setCartState] = useState<CartItem[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [modal,     setModal]     = useState<Product | null>(null);
@@ -273,7 +273,7 @@ export default function RestaurantPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!DB[id]) {
+    if (id) {
       fetch("http://localhost:4000/api/restaurants")
         .then(res => res.json())
         .then(data => {
@@ -294,10 +294,8 @@ export default function RestaurantPage() {
                 if (!apiRest.products || apiRest.products.length === 0) return [
                   {
                     id: "gen", name: "Menú Principal", items: [
-                      {id: `${id}_1`, name: "Hamburguesa Premium", desc: "Doble carne y queso fundido", price: 8.50, img: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&h=300&fit=crop", sections: BURGER_SECS},
-                      {id: `${id}_2`, name: "Pizza Artesanal", desc: "Masa fina, tomate, queso y pepperoni", price: 10.00, img: "https://images.unsplash.com/photo-1513104890138-7c749659a591?w=400&h=300&fit=crop"},
-                      {id: `${id}_3`, name: "Ensalada César", desc: "Lechuga, pollo crujiente y salsa", price: 6.50, img: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&h=300&fit=crop"},
-                      {id: `${id}_4`, name: "Refresco", desc: "Lata 330ml", price: 2.00, img: "https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400&h=300&fit=crop"},
+                      {id: `${id}_1`, name: "Plato Principal", desc: "Plato de la casa", price: 8.50, img: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&h=300&fit=crop"},
+                      {id: `${id}_2`, name: "Bebida", desc: "Refresco 330ml", price: 2.00, img: "https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400&h=300&fit=crop"},
                     ]
                   }
                 ];
@@ -377,15 +375,7 @@ export default function RestaurantPage() {
     }
     setLoadingOrder(true);
     try {
-      if (DB[id]) {
-        setTimeout(() => {
-          updateCart([]);
-          setDrawer(false);
-          setOrderSuccessId("DEMO-" + Math.random().toString(36).substring(2, 8).toUpperCase());
-          setLoadingOrder(false);
-        }, 800);
-        return;
-      }
+
 
       const user = auth.currentUser;
       if (!user) throw new Error("No user");
