@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Heart, ShoppingBag, Plus, Minus, X, Check, Clock, Star, MapPin, Search } from "lucide-react";
 
 import { Option, SecDef, Product, MenuCat, RestInfo, CartItem } from "@/lib/types";
@@ -232,22 +232,33 @@ function CartDrawer({ cart, restName, onClose, onQty, onOrder, orderType, setOrd
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
-const getCart = (): CartItem[] => {
+const getCart = (id: string): CartItem[] => {
   if (typeof window === "undefined") return [];
-  try { return JSON.parse(localStorage.getItem("tastio_cart") || "[]"); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem(`tastio_cart_${id}`) || "[]"); } catch { return []; }
 };
 
-const setCart = (cart: CartItem[]) => {
-  if (typeof window !== "undefined") localStorage.setItem("tastio_cart", JSON.stringify(cart));
+const setCart = (id: string, cart: CartItem[]) => {
+  if (typeof window !== "undefined") localStorage.setItem(`tastio_cart_${id}`, JSON.stringify(cart));
 };
 
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 export default function RestaurantPage() {
   const params  = useParams<{ id: string }>();
+  const router  = useRouter();
   const id      = params.id;
   const [rest, setRest] = useState<RestInfo | null>(null);
   const [cart, setCartState] = useState<CartItem[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
+
+  const updateCart = (newCart: CartItem[]) => {
+    setCartState(newCart);
+    setCart(id, newCart);
+  };
+
+  useEffect(() => {
+    setCartState(getCart(id));
+  }, [id]);
+
   const [modal,     setModal]     = useState<Product | null>(null);
   const [drawer,    setDrawer]    = useState(false);
   const [activeTab, setActiveTab] = useState(0);
@@ -268,7 +279,6 @@ export default function RestaurantPage() {
         setLiked(favs.includes(id));
       } catch (e) {}
     });
-    setCartState(getCart());
     return () => unsub();
   }, [id]);
 
@@ -281,37 +291,48 @@ export default function RestaurantPage() {
             console.error("API Error or Rate Limit:", data);
             return;
           }
-          const apiRest = data.find((r: any) => r.id === id);
+          const apiRest = data.find((r: any) => r.slug === id || r.id === id);
           if (apiRest) {
             setRest({
-              id,
+              id: apiRest.id,
               name: apiRest.name,
               tagline: apiRest.address || "Local asociado a Tastio",
               subscriptionPlan: apiRest.subscriptionPlan,
               heroImg: apiRest.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
               time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
               menu: (() => {
-                if (!apiRest.products || apiRest.products.length === 0) return [
-                  {
-                    id: "gen", name: "Menú Principal", items: [
-                      {id: `${id}_1`, name: "Plato Principal", desc: "Plato de la casa", price: 8.50, img: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&h=300&fit=crop"},
-                      {id: `${id}_2`, name: "Bebida", desc: "Refresco 330ml", price: 2.00, img: "https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400&h=300&fit=crop"},
-                    ]
-                  }
-                ];
+                if (!apiRest.products || apiRest.products.length === 0) return [];
 
-                const categories = Array.from(new Set(apiRest.products.map((p: any) => p.category || "Sin Categoría")));
+                const categoryOrder = ["Menús", "Bandejas", "Camperos", "Hamburguesas", "Kebabs", "Shawarmas", "Chawarmas", "Pizzas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas", "Extras"];
+                // Hide standalone "Extras" products — they live inside sectionsData of other products
+                const visibleProducts = apiRest.products.filter((p: any) => p.category !== 'Extras');
+                let categories = Array.from(new Set(visibleProducts.map((p: any) => p.category || "Sin Categoría"))) as string[];
+                categories.sort((a, b) => {
+                  const iA = categoryOrder.indexOf(a);
+                  const iB = categoryOrder.indexOf(b);
+                  if (iA === -1 && iB === -1) return a.localeCompare(b);
+                  if (iA === -1) return 1;
+                  if (iB === -1) return -1;
+                  return iA - iB;
+                });
                 return categories.map((catName, idx) => ({
                   id: `cat_${idx}`,
-                  name: catName as string,
-                  items: apiRest.products.filter((p: any) => (p.category || "Sin Categoría") === catName).map((p: any) => ({
-                    id: p.id,
-                    name: p.name,
-                    desc: p.description || "",
-                    price: p.price,
-                    img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
-                    sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
-                  }))
+                  name: catName,
+                  items: visibleProducts
+                    .filter((p: any) => (p.category || "Sin Categoría") === catName)
+                    .sort((a: any, b: any) => {
+                      // Featured items first, then alphabetical
+                      if (b.isFeatured !== a.isFeatured) return b.isFeatured ? 1 : -1;
+                      return 0;
+                    })
+                    .map((p: any) => ({
+                      id: p.id,
+                      name: p.name,
+                      desc: p.description || "",
+                      price: p.price,
+                      img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
+                      sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
+                    }))
                 }));
               })()
             });
@@ -384,12 +405,13 @@ export default function RestaurantPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({
-          restaurantId: id,
+          restaurantId: rest!.id,
           totalAmount: cartTotal,
           items: cart.map(item => ({
             productId: item.pid,
             quantity: item.qty,
             price: item.basePrice + item.extrasPrice,
+            extrasPrice: item.extrasPrice,
             options: item.extras
           })),
           paymentMethod: paymentMethod,
@@ -403,7 +425,7 @@ export default function RestaurantPage() {
         setDrawer(false);
         setOrderSuccessId(data.id);
       } else {
-        alert("Hubo un error al procesar el pedido.");
+        alert("Hubo un error al procesar el pedido: " + (data.error || "Desconocido"));
       }
     } catch (e) {
       alert("Error de conexión al servidor.");
@@ -429,29 +451,34 @@ export default function RestaurantPage() {
             <p className="text-[12px] text-[#A0AEC0] font-bold uppercase tracking-wider mb-1">Número de Pedido</p>
             <p className="font-mono text-[18px] font-extrabold text-[var(--theme-primary,#FF6B35)]">#{orderSuccessId.substring(0,8)}</p>
           </div>
-          <button onClick={() => setOrderSuccessId(null)}
-            className="w-full text-white font-bold text-[15px] py-4 rounded-2xl border-none cursor-pointer transition-all hover:-translate-y-[1px] hover:shadow-[0_4px_20px_rgba(255,107,53,0.35)]"
-            style={{ background:"var(--theme-primary-grad, linear-gradient(135deg,#FF6B35,#FF8C55))" }}>
-            Volver al Menú
-          </button>
+          
+          <div className="space-y-3">
+            <button onClick={() => router.push(`/rastreo/${orderSuccessId}`)}
+              className="w-full text-white font-extrabold text-[15px] py-4 rounded-2xl border-none cursor-pointer transition-all hover:-translate-y-[1px] hover:shadow-[0_4px_20px_rgba(255,107,53,0.35)]"
+              style={{ background:"var(--theme-primary-grad, linear-gradient(135deg,#FF6B35,#FF8C55))" }}>
+              Rastrear mi pedido
+            </button>
+            <button onClick={() => setOrderSuccessId(null)}
+              className="w-full bg-[#F0F0F0] text-[#555] font-bold text-[15px] py-4 rounded-2xl border-none cursor-pointer hover:bg-[#EBEBEB] transition-colors">
+              Volver al Menú
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const updateCart = (next: CartItem[]) => { setCartState(next); setCart(next); };
-
-  const addToCart = (item: CartItem) => updateCart([...getCart(), item]);
+  const addToCart = (item: CartItem) => updateCart([...getCart(id), item]);
 
   const quickAdd = (product: Product) => {
     if (product.sections?.length) { setModal(product); return; }
-    const prev     = getCart();
+    const prev     = getCart(id);
     const existing = prev.find(c => c.pid === product.id && c.extras.length === 0);
     if (existing)  updateCart(prev.map(c => c.cid === existing.cid ? { ...c, qty: c.qty + 1 } : c));
     else           updateCart([...prev, { cid: Math.random().toString(36).slice(2), pid: product.id, name: product.name, basePrice: product.price, extrasPrice: 0, img: product.img, qty: 1, extras: [], restId: id, restName: rest?.name || "" }]);
   };
 
-  const changeQty = (cid: string, delta: number) => updateCart(getCart().map(c => c.cid === cid ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
+  const changeQty = (cid: string, delta: number) => updateCart(getCart(id).map(c => c.cid === cid ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
 
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cart.reduce((s, i) => s + (i.basePrice + i.extrasPrice) * i.qty, 0);
@@ -475,34 +502,34 @@ export default function RestaurantPage() {
       >
         <img src={rest.heroImg} alt={rest.name} draggable={false} className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-        <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-10">
-          <Link href="/" className="w-10 h-10 bg-[var(--theme-card,#fff)]/90 backdrop-blur-sm rounded-full flex items-center justify-center no-underline shadow-sm hover:bg-[var(--theme-card,#fff)] transition-colors">
-            <ArrowLeft className="w-5 h-5 text-[var(--theme-text,#1B1B1B)]" />
-          </Link>
-          <div className="flex items-center gap-2">
-            <Link href={`/restaurant/${id}/tpv`} target="_blank"
-              className="px-4 h-10 bg-black/50 hover:bg-black/80 backdrop-blur-sm rounded-full flex items-center justify-center text-white text-[13px] font-bold no-underline transition-colors border border-white/20">
-              Modo TPV
+        <div className="absolute top-4 left-0 right-0 z-10">
+          <div className="max-w-[1200px] mx-auto px-4 sm:px-6 flex items-center justify-between w-full">
+            <Link href="/" className="w-10 h-10 bg-[var(--theme-card,#fff)]/90 backdrop-blur-sm rounded-full flex items-center justify-center no-underline shadow-sm hover:bg-[var(--theme-card,#fff)] transition-colors">
+              <ArrowLeft className="w-5 h-5 text-[var(--theme-text,#1B1B1B)]" />
             </Link>
-            <button onClick={toggleLike}
-              className="w-10 h-10 bg-[var(--theme-card,#fff)]/90 backdrop-blur-sm rounded-full flex items-center justify-center border-none cursor-pointer shadow-sm hover:bg-[var(--theme-card,#fff)] transition-colors">
-              <Heart className="w-5 h-5" fill={liked?"#FF6B35":"none"} stroke={liked?"#FF6B35":"#1B1B1B"} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={toggleLike}
+                className="w-10 h-10 bg-[var(--theme-card,#fff)]/90 backdrop-blur-sm rounded-full flex items-center justify-center border-none cursor-pointer shadow-sm hover:bg-[var(--theme-card,#fff)] transition-colors">
+                <Heart className="w-5 h-5" fill={liked?"#FF6B35":"none"} stroke={liked?"#FF6B35":"#1B1B1B"} />
+              </button>
+            </div>
           </div>
         </div>
-        <div className="absolute bottom-0 left-0 right-0 px-5 pb-5 sm:pb-8">
-          <h1 className="text-[28px] sm:text-[36px] font-black text-white leading-tight drop-shadow-md flex items-center gap-3">
-            {rest.name}
-            <Link href="/mapa" className="inline-flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[var(--theme-card,#fff)]/20 hover:bg-[var(--theme-card,#fff)]/30 backdrop-blur-sm transition-colors text-white" title="Ver en mapa">
-              <MapPin className="w-4 h-4 sm:w-5 sm:h-5" />
-            </Link>
-            {rest.subscriptionPlan && (
-              <span className={`text-[12px] uppercase font-black px-2 py-1 rounded-lg ${rest.subscriptionPlan !== 'FREE' ? 'bg-[#FFBE00] text-black' : 'bg-[var(--theme-card,#fff)]/20 text-white backdrop-blur-sm'}`}>
-                {rest.subscriptionPlan !== 'FREE' ? 'Premium' : 'Gratuito'}
-              </span>
-            )}
-          </h1>
-          <p className="text-white/80 text-[14px] font-medium mt-1">{rest.tagline}</p>
+        <div className="absolute bottom-0 left-0 right-0">
+          <div className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-5 sm:pb-8 w-full">
+            <h1 className="text-[28px] sm:text-[36px] font-black text-white leading-tight drop-shadow-md flex items-center gap-3">
+              {rest.name}
+              <Link href="/mapa" className="inline-flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[var(--theme-card,#fff)]/20 hover:bg-[var(--theme-card,#fff)]/30 backdrop-blur-sm transition-colors text-white" title="Ver en mapa">
+                <MapPin className="w-4 h-4 sm:w-5 sm:h-5" />
+              </Link>
+              {rest.subscriptionPlan && (
+                <span className={`text-[12px] uppercase font-black px-2 py-1 rounded-lg ${rest.subscriptionPlan !== 'FREE' ? 'bg-[#FFBE00] text-black' : 'bg-[var(--theme-card,#fff)]/20 text-white backdrop-blur-sm'}`}>
+                  {rest.subscriptionPlan !== 'FREE' ? 'Premium' : 'Gratuito'}
+                </span>
+              )}
+            </h1>
+            <p className="text-white/80 text-[14px] font-medium mt-1">{rest.tagline}</p>
+          </div>
         </div>
       </div>
 
@@ -564,7 +591,7 @@ export default function RestaurantPage() {
             </div>
             
             <div className="space-y-1">
-              <h3 className="text-[14px] font-extrabold text-[#AAAAAA] uppercase tracking-wider mb-2 px-2">Categorías</h3>
+              <h3 className="text-[14px] font-extrabold text-[#AAAAAA] uppercase tracking-wider mb-2 px-4">Categorías</h3>
               {filteredMenu.map((cat, i) => (
               <button key={cat.id} 
                 onClick={() => { setActiveTab(i); sectionRefs.current[i]?.scrollIntoView({ behavior:"smooth", block:"start" }); }}
@@ -581,7 +608,7 @@ export default function RestaurantPage() {
         <div className="flex-1 space-y-10 min-w-0">
           {filteredMenu.length === 0 ? (
             <div className="py-20 text-center">
-              <div className="text-[64px] mb-4">🔍</div>
+              <div className="flex justify-center mb-6"><Search className="w-16 h-16 text-[#D1D5DB]" strokeWidth={1.5} /></div>
               <h3 className="text-[20px] font-extrabold text-[var(--theme-text,#1B1B1B)]">No encontramos nada</h3>
               <p className="text-[15px] text-[#888] mt-2">Prueba a buscar con otras palabras.</p>
             </div>

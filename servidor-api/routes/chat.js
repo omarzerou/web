@@ -15,7 +15,10 @@ const sanitize = (str) => {
 // Obtener mensajes del restaurante propio
 router.get('/messages', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const reqRestId = req.headers['x-restaurant-id'];
+    const restaurant = reqRestId 
+      ? await prisma.restaurant.findFirst({ where: { id: reqRestId, ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'Sin restaurante' });
 
     const messages = await prisma.chatMessage.findMany({
@@ -37,7 +40,10 @@ router.post('/messages', validarTokenFirebase, soloRestaurantOwner, async (req, 
   if (content.length > 1000) return res.status(400).json({ error: 'Mensaje demasiado largo' });
 
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const reqRestId = req.headers['x-restaurant-id'];
+    const restaurant = reqRestId 
+      ? await prisma.restaurant.findFirst({ where: { id: reqRestId, ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'Sin restaurante' });
 
     const message = await prisma.chatMessage.create({

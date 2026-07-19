@@ -500,9 +500,13 @@ export default function ProfilePage() {
                        <div className="text-[16px] font-extrabold text-[#FF6B35]">€{o.totalAmount.toFixed(2)}</div>
                        <div className="text-[11px] font-bold px-2 py-1 bg-green-100 text-green-600 rounded-md mt-1 uppercase tracking-wider">{o.status}</div>
                      </div>
-                     {o.status === "DELIVERED" && (
+                     {o.status === "DELIVERED" ? (
                        <button onClick={() => setReviewOrder(o)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
                          <Star className="w-3.5 h-3.5 fill-current" /> Dejar una reseña
+                       </button>
+                     ) : (
+                       <button onClick={() => router.push(`/rastreo/${o.id}`)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
+                         <Clock className="w-3.5 h-3.5" /> Rastrear pedido
                        </button>
                      )}
                   </div>
@@ -525,7 +529,7 @@ export default function ProfilePage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
               {favRests.map((r: any) => (
-                <Link key={r.id} href={`/restaurant/${r.id}`} className="no-underline group">
+                <Link key={r.id} href={`/restaurant/${r.slug || r.id}`} className="no-underline group">
                   <div className="flex items-center gap-3 p-3 bg-white border border-[#F0F0F0] rounded-2xl shadow-sm hover:shadow-md transition-shadow">
                     <img src={r.imageUrl || r.heroImg} className="w-16 h-16 rounded-xl object-cover" />
                     <div>

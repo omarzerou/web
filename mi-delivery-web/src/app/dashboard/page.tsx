@@ -3,8 +3,14 @@
 import { useEffect, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
-import { Store, CheckCircle, Clock, Truck, Package, XCircle, TrendingUp, AlertCircle } from "lucide-react";
-import Image from "next/image";
+import { Store, CheckCircle, Clock, Package, AlertCircle } from "lucide-react";
+
+type Client = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+};
 
 type OrderItem = {
   id: string;
@@ -19,8 +25,10 @@ type Order = {
   status: "PENDING" | "PREPARING" | "ON_THE_WAY" | "DELIVERED" | "CANCELLED";
   paymentMethod: "CASH" | "DATAPHONE";
   deliveryAddress: string;
+  orderType: "DELIVERY" | "PICKUP";
   createdAt: string;
   items: OrderItem[];
+  client: Client;
 };
 
 type RestaurantData = {
@@ -64,7 +72,6 @@ export default function ProfessionalDashboard() {
     const unsubscribe = auth.onAuthStateChanged((user) => {
       if (user) {
         fetchDashboard();
-        // Polling cada 5 segundos para simular tiempo real
         const interval = setInterval(fetchDashboard, 5000);
         return () => clearInterval(interval);
       } else {
@@ -85,7 +92,7 @@ export default function ProfessionalDashboard() {
         },
         body: JSON.stringify({ status })
       });
-      if (res.ok) fetchDashboard(); // Refresh immediately
+      if (res.ok) fetchDashboard();
     } catch (error) {
       alert("Error actualizando pedido");
     }
@@ -111,23 +118,19 @@ export default function ProfessionalDashboard() {
     );
   }
 
-  // Filtrar pedidos por estado
   const activeOrders = restaurant.orders.filter(o => o.status === 'PENDING' || o.status === 'PREPARING' || o.status === 'ON_THE_WAY');
   const pastOrders = restaurant.orders.filter(o => o.status === 'DELIVERED' || o.status === 'CANCELLED');
 
   const parseOptions = (optionsStr: string | null) => {
     if (!optionsStr) return null;
-    try {
-      return JSON.parse(optionsStr);
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(optionsStr); } catch { return null; }
   };
 
-  const ALL_INGREDIENTS = ['lechuga','tomate','cebolla','lombarda'];
+  const ALL_INGREDIENTS = ['lechuga', 'tomate', 'cebolla', 'lombarda'];
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-300 font-sans p-6 overflow-hidden flex flex-col">
+
       {/* HEADER */}
       <header className="flex justify-between items-center mb-8 bg-[#1e293b] p-4 rounded-2xl border border-slate-700">
         <div className="flex items-center gap-4">
@@ -149,7 +152,7 @@ export default function ProfessionalDashboard() {
           <div className="bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-700 text-center">
             <p className="text-xs text-slate-500 uppercase font-bold">Ingresos</p>
             <p className="text-xl font-black text-green-400">
-              {restaurant.orders.filter(o=>o.status==='DELIVERED').reduce((acc,o)=>acc+o.totalAmount,0).toFixed(2)} €
+              {restaurant.orders.filter(o => o.status === 'DELIVERED').reduce((acc, o) => acc + o.totalAmount, 0).toFixed(2)} €
             </p>
           </div>
         </div>
@@ -157,11 +160,11 @@ export default function ProfessionalDashboard() {
 
       {/* DASHBOARD GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 h-full">
-        
+
         {/* ENTRANTES */}
         <div className="bg-[#1e293b] rounded-2xl border border-slate-700 flex flex-col h-[75vh]">
           <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-[#0f172a]/50 rounded-t-2xl">
-            <h2 className="font-bold text-white flex items-center gap-2"><Clock className="text-orange-500"/> Entrantes & Cocina</h2>
+            <h2 className="font-bold text-white flex items-center gap-2"><Clock className="text-orange-500" /> Entrantes &amp; Cocina</h2>
             <span className="bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full">{activeOrders.length}</span>
           </div>
           <div className="p-4 overflow-y-auto flex-1 space-y-4">
@@ -169,15 +172,30 @@ export default function ProfessionalDashboard() {
               <div key={order.id} className="border-l-4 p-4 rounded-r-xl bg-[#0f172a] shadow-lg border-orange-500">
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                    <span className="text-xs text-slate-500">#{order.id.slice(0,8)}</span>
-                    <h3 className="font-bold text-white">{order.deliveryAddress}</h3>
+                    <span className="text-xs text-slate-500">#{order.id.slice(0, 8)}</span>
+                    {/* Nombre y teléfono del cliente */}
+                    <h3 className="font-bold text-white">{order.client?.name ?? order.deliveryAddress}</h3>
+                    {order.client?.phone && (
+                      <a href={`tel:${order.client.phone}`} className="text-xs text-blue-400 hover:text-blue-300">
+                        📞 {order.client.phone}
+                      </a>
+                    )}
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      📍 {order.orderType === 'PICKUP' ? 'Recogida en local' : order.deliveryAddress}
+                    </p>
                     <span className={`text-xs font-bold px-2 py-0.5 rounded mt-1 inline-block ${order.paymentMethod === 'DATAPHONE' ? 'bg-purple-500/20 text-purple-400' : 'bg-green-500/20 text-green-400'}`}>
                       {order.paymentMethod === 'DATAPHONE' ? '💳 Traer Datáfono' : '💵 Efectivo'}
                     </span>
                   </div>
-                  <div className="text-xl font-black text-white">{order.totalAmount.toFixed(2)}€</div>
+                  <div className="text-right">
+                    <div className="text-xl font-black text-white">{order.totalAmount.toFixed(2)}€</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      Pedido: {new Date(order.createdAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
                 </div>
-                
+
+                {/* Items */}
                 <div className="space-y-2 mb-4 bg-[#1e293b] p-3 rounded-lg border border-slate-700">
                   {order.items.map(item => {
                     const opts = parseOptions(item.options);
@@ -185,20 +203,31 @@ export default function ProfessionalDashboard() {
                       <div key={item.id} className="text-sm border-b border-slate-700/50 pb-2 last:border-0 last:pb-0">
                         <div className="font-bold text-slate-200">{item.quantity}x {item.product.name}</div>
                         {opts && (
-                          <div className="pl-4 mt-1 space-y-1">
-                            {opts.ingredients && opts.ingredients.length > 0 && <p className="text-xs text-green-400"><span className="font-bold">Con:</span> {opts.ingredients.join(', ')}</p>}
-                            {opts.ingredients && <p className="text-xs text-red-400"><span className="font-bold">Sin:</span> {ALL_INGREDIENTS.filter(i => !opts.ingredients.includes(i)).join(', ') || 'Nada'}</p>}
-                            {opts.sauces && opts.sauces.length > 0 && <p className="text-xs text-blue-400"><span className="font-bold">Salsas:</span> {opts.sauces.join(', ')}</p>}
-                            {opts.extras && opts.extras.length > 0 && <p className="text-xs text-orange-400 font-bold">Extras: {opts.extras.join(', ')}</p>}
+                          <div className="pl-4 mt-1 space-y-0.5">
+                            {opts.ingredients && opts.ingredients.length > 0 && (
+                              <p className="text-xs text-green-400"><span className="font-bold">Con:</span> {opts.ingredients.join(', ')}</p>
+                            )}
+                            {opts.ingredients && (
+                              <p className="text-xs text-red-400"><span className="font-bold">Sin:</span> {ALL_INGREDIENTS.filter(i => !opts.ingredients.includes(i)).join(', ') || 'Nada'}</p>
+                            )}
+                            {opts.sauces && opts.sauces.length > 0 && (
+                              <p className="text-xs text-blue-400"><span className="font-bold">Salsas:</span> {opts.sauces.join(', ')}</p>
+                            )}
+                            {opts.extras && opts.extras.length > 0 && (
+                              <p className="text-xs text-orange-400 font-bold">Extras: {opts.extras.join(', ')}</p>
+                            )}
                           </div>
                         )}
                       </div>
-                    )
+                    );
                   })}
                 </div>
 
-                <button onClick={() => updateOrderStatus(order.id, 'DELIVERED')} className="w-full py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-2">
-                  <CheckCircle className="w-4 h-4"/> Pedido Terminado
+                <button
+                  onClick={() => updateOrderStatus(order.id, 'DELIVERED')}
+                  className="w-full py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-2"
+                >
+                  <CheckCircle className="w-4 h-4" /> Pedido Terminado
                 </button>
               </div>
             ))}
@@ -209,14 +238,15 @@ export default function ProfessionalDashboard() {
         {/* HISTORIAL RECIENTE */}
         <div className="bg-[#1e293b] rounded-2xl border border-slate-700 flex flex-col h-[75vh]">
           <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-[#0f172a]/50 rounded-t-2xl">
-            <h2 className="font-bold text-white flex items-center gap-2"><Package className="text-green-500"/> Completados</h2>
+            <h2 className="font-bold text-white flex items-center gap-2"><Package className="text-green-500" /> Completados</h2>
             <span className="bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full">{pastOrders.length}</span>
           </div>
           <div className="p-4 overflow-y-auto flex-1 space-y-3">
             {pastOrders.map(order => (
               <div key={order.id} className="p-3 rounded-xl bg-[#0f172a] border border-slate-700/50 flex justify-between items-center">
                 <div>
-                  <h3 className="font-bold text-slate-300 text-sm line-clamp-1">{order.deliveryAddress}</h3>
+                  <h3 className="font-bold text-slate-300 text-sm">{order.client?.name ?? order.deliveryAddress}</h3>
+                  <p className="text-xs text-slate-500 line-clamp-1">{order.deliveryAddress}</p>
                   <span className={`text-xs font-bold ${order.status === 'DELIVERED' ? 'text-green-500' : 'text-red-500'}`}>
                     {order.status === 'DELIVERED' ? 'Completado' : 'Cancelado'}
                   </span>

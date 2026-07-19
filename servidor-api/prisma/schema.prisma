@@ -29,6 +29,7 @@ model User {
 
 model Restaurant {
   id          String   @id @default(uuid())
+  slug        String?  @unique
   name        String
   description String?
   address     String
@@ -121,11 +122,21 @@ model PlatformConfig {
   platformName       String   @default("Tastio")
   supportEmail       String   @default("soporte@tastio.com")
   supportPhone       String?
-  paymentGatewayKeys String?
+  paymentGatewayKeys String?  // JSON { stripePublic, stripeSecret }
   currency           String   @default("EUR")
   language           String   @default("es")
   emailNotifications Boolean  @default(true)
   pushNotifications  Boolean  @default(true)
+  // Marketing & Analytics
+  googleAnalyticsId  String?  // Measurement ID: G-XXXXXXXXXX
+  googleTagManagerId String?  // GTM-XXXXXXX
+  googleAdsId        String?  // Conversion ID: AW-XXXXXXXXXX
+  metaPixelId        String?  // Meta/Facebook Pixel ID
+  // SEO Global
+  seoTitle           String?
+  seoDescription     String?
+  // Business
+  platformCommission Float    @default(0)  // % de comisión por pedido
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }

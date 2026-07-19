@@ -7,7 +7,7 @@ import {
   LayoutDashboard, ShoppingBag, LayoutGrid,
   BarChart2, Check, X, MapPin, Star, Store, TrendingUp,
   Plus, Trash2, Package, MessageCircle, Image as ImageIcon,
-  Upload, Send, Camera, Settings
+  Upload, Send, Camera, Settings, Pencil, Save, Clock
 } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
@@ -98,6 +98,17 @@ export default function AdminPage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const userRef = useRef<any>(null);
 
+  // Notificaciones
+  const [notifCount, setNotifCount] = useState(0);
+  const lastOrderCountRef = useRef(0);
+  const lastChatCountRef = useRef(0);
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const notifRef = useRef<any>(null);
+
+  // Edición de precio inline
+  const [editingPrice, setEditingPrice] = useState<string | null>(null);
+  const [editingPriceValue, setEditingPriceValue] = useState<string>("");
+
   // Catálogo – añadir plato
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: "", description: "", price: "", category: "", isOutofStock: false, isFeatured: false });
@@ -159,10 +170,10 @@ export default function AdminPage() {
           setShowSetupWizard(true);
         }
       } else if (resStats.status === 403) {
-        alert("Acceso Denegado: No tienes permisos para acceder al panel de administración de este restaurante.");
         router.push("/");
         return;
       }
+      setIsAuthorized(true);
       if (resOrders.ok) setOrders(await resOrders.json());
       if (resProducts.ok) setProducts(await resProducts.json());
       if (resChart.ok) setChartData(await resChart.json());
@@ -182,7 +193,6 @@ export default function AdminPage() {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user) { router.push("/login"); return; }
-      setIsAuthorized(true);
       userRef.current = user;
       fetchAdminData(user);
     });
@@ -192,10 +202,63 @@ export default function AdminPage() {
   useEffect(() => {
     if (activeTab === "Chat") {
       fetchChat();
-      const interval = setInterval(fetchChat, 5000); // polling cada 5s
+      const interval = setInterval(fetchChat, 5000);
       return () => clearInterval(interval);
     }
   }, [activeTab, fetchChat]);
+
+  // ─── POLLING NOTIFICACIONES ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthorized) return;
+    const checkNotifications = async () => {
+      const user = userRef.current || auth.currentUser;
+      if (!user) return;
+      try {
+        const token = await user.getIdToken();
+        const headers: any = { "Authorization": `Bearer ${token}` };
+        const [resOrders, resChat] = await Promise.all([
+          fetch("http://localhost:4000/api/restaurant-admin/orders", { headers }),
+          fetch("http://localhost:4000/api/chat/messages", { headers })
+        ]);
+        let newNotifs = 0;
+        if (resOrders.ok) {
+          const orders = await resOrders.json();
+          const pendingCount = orders.filter((o: any) => o.status === 'PENDING').length;
+          if (lastOrderCountRef.current > 0 && pendingCount > lastOrderCountRef.current) {
+            newNotifs += pendingCount - lastOrderCountRef.current;
+            if (Notification.permission === 'granted') {
+              new Notification('🍔 Nuevo Pedido en Tastio', {
+                body: `Tienes ${pendingCount - lastOrderCountRef.current} nuevo(s) pedido(s) pendiente(s).`,
+                icon: '/favicon.ico'
+              });
+            }
+          }
+          lastOrderCountRef.current = pendingCount;
+        }
+        if (resChat.ok) {
+          const msgs = await resChat.json();
+          const adminMsgs = msgs.filter((m: any) => m.senderRole === 'ADMIN').length;
+          if (lastChatCountRef.current > 0 && adminMsgs > lastChatCountRef.current) {
+            newNotifs += adminMsgs - lastChatCountRef.current;
+            if (Notification.permission === 'granted') {
+              new Notification('💬 Mensaje del SuperAdmin', {
+                body: 'Tienes un nuevo mensaje en el chat de soporte.',
+                icon: '/favicon.ico'
+              });
+            }
+          }
+          lastChatCountRef.current = adminMsgs;
+        }
+        if (newNotifs > 0) setNotifCount(prev => prev + newNotifs);
+      } catch (e) {}
+    };
+    // Request permission
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+    const interval = setInterval(checkNotifications, 15000);
+    return () => clearInterval(interval);
+  }, [isAuthorized]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -308,6 +371,23 @@ export default function AdminPage() {
     } catch (e) {}
   };
 
+  const handleUpdateProductPrice = async (id: string, price: number) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+      const res = await fetch(`http://localhost:4000/api/products/${id}`, {
+        method: "PUT",
+        headers: getHeaders(token, true),
+        body: JSON.stringify({ price })
+      });
+      if (res.ok) {
+        setProducts(prev => prev.map(p => p.id === id ? { ...p, price } : p));
+      }
+    } catch (e) {}
+    setEditingPrice(null);
+  };
+
   const handleUpdateProductToggle = async (id: string, field: string, value: boolean) => {
     try {
       const user = auth.currentUser;
@@ -387,11 +467,7 @@ export default function AdminPage() {
 
   // ─── GUARDS ───────────────────────────────────────────────────────────────
 
-  if (!isAuthorized) return (
-    <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center">
-      <div className="w-10 h-10 border-4 border-[#F0F2F5] border-t-[#FF6B35] rounded-full animate-spin" />
-    </div>
-  );
+  if (!isAuthorized) return null;
 
   if (restaurant && restaurant.status === 'PENDING') {
     return (
@@ -640,9 +716,38 @@ export default function AdminPage() {
               <Search className="w-4 h-4 text-[#A0AEC0]" />
               <input className="bg-transparent text-[13px] outline-none w-[140px]" placeholder={t.search} />
             </div>
-            <button className="p-2 rounded-xl hover:bg-[#F8F9FA]">
-              <Bell className="w-5 h-5 text-[#718096]" />
-            </button>
+            {/* Bell with notification badge */}
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={() => { setShowNotifDropdown(!showNotifDropdown); setNotifCount(0); }}
+                className="p-2 rounded-xl hover:bg-[#F8F9FA] relative">
+                <Bell className="w-5 h-5 text-[#718096]" />
+                {notifCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                    {notifCount > 9 ? '9+' : notifCount}
+                  </span>
+                )}
+              </button>
+              {showNotifDropdown && (
+                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl border border-[#F0F2F5] shadow-xl z-50 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-[#F0F2F5]">
+                    <p className="font-extrabold text-[14px] text-[#1A202C]">Notificaciones</p>
+                  </div>
+                  <div className="p-4">
+                    <button onClick={() => { setActiveTab('Pedidos'); setShowNotifDropdown(false); }}
+                      className="w-full text-left p-3 rounded-xl hover:bg-[#F8F9FA] flex items-center gap-3 mb-2">
+                      <ShoppingBag className="w-4 h-4 text-[#FF6B35]" />
+                      <span className="text-[13px] font-semibold text-[#4A5568]">Ver pedidos pendientes</span>
+                    </button>
+                    <button onClick={() => { setActiveTab('Chat'); setShowNotifDropdown(false); }}
+                      className="w-full text-left p-3 rounded-xl hover:bg-[#F8F9FA] flex items-center gap-3">
+                      <MessageCircle className="w-4 h-4 text-[#00A884]" />
+                      <span className="text-[13px] font-semibold text-[#4A5568]">Ver mensajes del Admin</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -943,7 +1048,30 @@ export default function AdminPage() {
                         <p className="font-extrabold text-[15px] text-[#1A202C]">{p.name}</p>
                         {p.category && <span className="inline-block px-2 py-0.5 mt-1 text-[10px] bg-[#F0F2F5] text-[#718096] font-bold rounded-full">{p.category}</span>}
                         {p.description && <p className="text-[12px] text-[#A0AEC0] mt-1 line-clamp-2">{p.description}</p>}
-                        <p className="font-black text-[#FF6B35] text-[16px] mt-2">€{p.price?.toFixed(2)}</p>
+                        {/* Price with inline edit */}
+                        {editingPrice === p.id ? (
+                          <div className="flex items-center gap-1.5 mt-2">
+                            <span className="text-[14px] font-black text-[#FF6B35]">€</span>
+                            <input
+                              type="number" min="0" step="0.01"
+                              value={editingPriceValue}
+                              onChange={e => setEditingPriceValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleUpdateProductPrice(p.id, parseFloat(editingPriceValue)); if (e.key === 'Escape') setEditingPrice(null); }}
+                              className="w-20 px-2 py-1 border-2 border-[#FF6B35] rounded-lg text-[14px] font-black text-[#FF6B35] outline-none"
+                              autoFocus
+                            />
+                            <button onClick={() => handleUpdateProductPrice(p.id, parseFloat(editingPriceValue))} className="p-1 bg-green-100 hover:bg-green-200 rounded-lg"><Check className="w-3.5 h-3.5 text-green-600" /></button>
+                            <button onClick={() => setEditingPrice(null)} className="p-1 bg-red-50 hover:bg-red-100 rounded-lg"><X className="w-3.5 h-3.5 text-red-500" /></button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 mt-2">
+                            <p className="font-black text-[#FF6B35] text-[16px]">€{p.price?.toFixed(2)}</p>
+                            <button onClick={() => { setEditingPrice(p.id); setEditingPriceValue(p.price?.toString() || '0'); }}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-[#FFF3EE] rounded-lg">
+                              <Pencil className="w-3 h-3 text-[#FF6B35]" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col gap-3 shrink-0 items-end">
                         <button onClick={() => handleDeleteProduct(p.id)}
@@ -1136,6 +1264,13 @@ export default function AdminPage() {
                     <input type="number" value={restaurantConfig.bufferTime} onChange={e => setRestaurantConfig((p:any) => ({ ...p, bufferTime: e.target.value }))}
                       className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35]" />
                     <p className="text-[11px] text-[#A0AEC0] mt-1">Tiempo que se añade automáticamente al recibir un pedido.</p>
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Horario de Apertura y Cierre</label>
+                    <input type="text" value={restaurantConfig.operatingHours || ''} onChange={e => setRestaurantConfig((p:any) => ({ ...p, operatingHours: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35]"
+                      placeholder="Ej: Lun-Vie 10:00-22:00 / Sáb-Dom 12:00-23:00" />
+                    <p className="text-[11px] text-[#A0AEC0] mt-1">Se mostrará en el menú público del restaurante.</p>
                   </div>
                 </div>
               </div>

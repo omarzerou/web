@@ -6,6 +6,12 @@ const prisma = new PrismaClient({ log: ['error'] });
 // Importar los middlewares de seguridad
 const { validarTokenFirebase, verificarPropietarioRestaurante } = require('../controllers/authController');
 
+// Helper para sanitizar strings (Prevención XSS)
+const sanitize = (str) => {
+  if (typeof str !== 'string') return str;
+  return str.trim().replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').substring(0, 2000);
+};
+
 /**
  * RUTAS DE PRODUCTOS (/api/productos)
  */
@@ -37,12 +43,21 @@ router.post('/', validarTokenFirebase, verificarPropietarioRestaurante, async (r
     try {
         // En este punto, req.dbUser tiene el usuario de Prisma
         // y ya pasó la verificación de que es RESTAURANT_OWNER o ADMIN.
+        let { name, description, price, imageUrl, category, isOutofStock, isFeatured } = req.body;
         
-        const { name, description, price, imageUrl, category, isOutofStock, isFeatured } = req.body;
-        
+        name = sanitize(name);
+        description = sanitize(description);
+        imageUrl = sanitize(imageUrl);
+        category = sanitize(category);
         // El frontend debe mandar el restaurantId (o podemos sacarlo de la base de datos si el dueño solo tiene uno)
         // Para más seguridad, forzamos que se asigne al restaurante del cual es dueño
-        const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+        // [PARCHE] Validar formato del header x-restaurant-id antes de usarlo en la query
+        const isValidId = (s) => typeof s === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(s);
+        const rawRestId = req.headers['x-restaurant-id'];
+        const reqRestId = isValidId(rawRestId) ? rawRestId : null;
+        const restaurant = reqRestId 
+            ? await prisma.restaurant.findFirst({ where: { id: reqRestId, ownerId: req.dbUser.id } })
+            : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
         
         if (!restaurant) {
             return res.status(403).json({ error: 'No tienes un restaurante asignado' });
@@ -77,7 +92,12 @@ router.post('/', validarTokenFirebase, verificarPropietarioRestaurante, async (r
 router.patch('/:id', validarTokenFirebase, verificarPropietarioRestaurante, async (req, res) => {
     try {
         const { id } = req.params;
-        const { price, isOutofStock, name, description, imageUrl, category, isFeatured } = req.body;
+        let { price, isOutofStock, name, description, imageUrl, category, isFeatured } = req.body;
+        
+        name = name !== undefined ? sanitize(name) : undefined;
+        description = description !== undefined ? sanitize(description) : undefined;
+        imageUrl = imageUrl !== undefined ? sanitize(imageUrl) : undefined;
+        category = category !== undefined ? sanitize(category) : undefined;
 
         // Primero verificar que el producto existe y pertenece al restaurante del usuario
         const productoExistente = await prisma.product.findUnique({
@@ -119,23 +139,20 @@ router.patch('/:id', validarTokenFirebase, verificarPropietarioRestaurante, asyn
 });
 
 // DELETE PROTEGIDO: Eliminar producto
-const SUPERADMIN_EMAILS = ['poleljesus@gmail.com', 'hhhhh@gmail.com'];
-const SUPERADMIN_EMAIL = SUPERADMIN_EMAILS[0];
-
-router.delete('/:id', validarTokenFirebase, async (req, res) => {
+// [PARCHE #3] Usar el middleware oficial en lugar de lógica manual duplicada
+router.delete('/:id', validarTokenFirebase, verificarPropietarioRestaurante, async (req, res) => {
   const { id } = req.params;
   if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: 'ID inválido' });
 
   try {
-    const user = await prisma.user.findUnique({ where: { email: req.usuario.email } });
-    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
-
     const product = await prisma.product.findUnique({ where: { id }, include: { restaurant: true } });
     if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
 
-    const isOwner = product.restaurant.ownerId === user.id;
-    const isSuperAdmin = user.role === 'ADMIN' && SUPERADMIN_EMAILS.includes(user.email);
-    if (!isOwner && !isSuperAdmin) return res.status(403).json({ error: 'Sin permiso' });
+    // El middleware ya garantiza que req.dbUser es ADMIN o RESTAURANT_OWNER válido.
+    // Solo añadimos la verificación de que el OWNER sea dueño de ESTE producto concreto.
+    if (req.dbUser.role !== 'ADMIN' && product.restaurant.ownerId !== req.dbUser.id) {
+      return res.status(403).json({ error: 'Sin permiso para eliminar este producto' });
+    }
 
     await prisma.product.delete({ where: { id } });
     res.json({ success: true });

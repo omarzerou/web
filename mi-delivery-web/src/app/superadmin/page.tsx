@@ -71,7 +71,10 @@ export default function SuperAdminPage() {
   // Platform Config
   const [platformConfig, setPlatformConfig] = useState<any>({
     platformName: "Tastio", supportEmail: "", supportPhone: "", currency: "EUR", language: "es",
-    emailNotifications: true, pushNotifications: true, paymentGatewayKeys: { stripePublic: "", stripeSecret: "" }
+    emailNotifications: true, pushNotifications: true,
+    paymentGatewayKeys: { stripePublic: "", stripeSecret: "" },
+    googleAnalyticsId: "", googleTagManagerId: "", googleAdsId: "", metaPixelId: "",
+    seoTitle: "", seoDescription: "", platformCommission: 0
   });
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMsg, setConfigMsg] = useState("");
@@ -94,9 +97,10 @@ export default function SuperAdminPage() {
         fetch("http://localhost:4000/api/superadmin/settings", { headers: { "Authorization": `Bearer ${token}` } }),
       ]);
       if (resStats.status === 403 || resRest.status === 403) {
-        setFetchError(`❌ Esta cuenta (${user.email}) no tiene permisos de SuperAdmin. Solo cuentas con rol ADMIN pueden acceder.`);
+        router.push("/");
         return;
       }
+      setIsAuthorized(true);
       if (resStats.ok) setStats(await resStats.json());
       if (resRest.ok) setRestaurantsList(await resRest.json());
       if (resOrders.ok) setOrders(await resOrders.json());
@@ -122,7 +126,6 @@ export default function SuperAdminPage() {
 
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user) { router.push("/login"); return; }
-      setIsAuthorized(true);
       setCurrentUserEmail(user.email || "");
       userRef.current = user;
       fetchData(user);
@@ -242,8 +245,12 @@ export default function SuperAdminPage() {
       const user = auth.currentUser;
       if (!user) return;
       const token = await user.getIdToken();
-      const res = await fetch(`http://localhost:4000/api/admin/restaurants/${restaurantId}/chat`, {
-        headers: { "Authorization": `Bearer ${token}` }
+      const res = await fetch(`http://localhost:4000/api/chat/messages`, {
+        headers: { 
+          "Authorization": `Bearer ${token}`,
+          "X-Impersonate-Restaurant": restaurantId,
+          "X-Restaurant-Id": restaurantId
+        }
       });
       if (res.ok) {
         setChatMessages(await res.json());
@@ -264,9 +271,14 @@ export default function SuperAdminPage() {
       const user = auth.currentUser;
       if (!user) return;
       const token = await user.getIdToken();
-      const res = await fetch(`http://localhost:4000/api/admin/restaurants/${chatActiveRest.id}/chat`, {
+      const res = await fetch(`http://localhost:4000/api/chat/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: { 
+          "Content-Type": "application/json", 
+          "Authorization": `Bearer ${token}`,
+          "X-Impersonate-Restaurant": chatActiveRest.id,
+          "X-Restaurant-Id": chatActiveRest.id
+        },
         body: JSON.stringify({ content: chatInput })
       });
       if (res.ok) {
@@ -405,14 +417,7 @@ export default function SuperAdminPage() {
   const rejectedRestaurants = restaurantsList.filter(r => r.status === 'REJECTED');
 
   if (!isAuthorized) {
-    return (
-      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center" style={{ fontFamily: "'Inter', sans-serif" }}>
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-[#FF6B35] border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-[#1A202C] font-bold text-[14px]">Verificando acceso de SuperAdmin...</p>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -510,10 +515,10 @@ export default function SuperAdminPage() {
                 <h2 className="text-[22px] font-extrabold text-[#1A202C]">Resumen</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <KPICard title="Usuarios Registrados" value={stats.users || 0} trend="+12%" color="#EBF4FF" icon={<Users className="w-5 h-5 text-blue-500" />} />
-                <KPICard title="Restaurantes" value={restaurantsList.length} trend="+5%" color="#E6FFFA" icon={<Store className="w-5 h-5 text-teal-500" />} />
-                <KPICard title="Pedidos Procesados" value={stats.orders || 0} trend="+18%" color="#FEFCBF" icon={<ShoppingBag className="w-5 h-5 text-yellow-500" />} />
-                <KPICard title="Ingresos Generados" value={`€${(stats.revenue || 0).toFixed(2)}`} trend="+22%" color="#C6F6D5" icon={<TrendingUp className="w-5 h-5 text-green-500" />} />
+                <KPICard title="Usuarios Registrados" value={stats.users || 0} trend={stats.trends?.users || '0%'} color="#EBF4FF" icon={<Users className="w-5 h-5 text-blue-500" />} />
+                <KPICard title="Restaurantes" value={restaurantsList.length} trend={stats.trends?.restaurants || '0%'} color="#E6FFFA" icon={<Store className="w-5 h-5 text-teal-500" />} />
+                <KPICard title="Pedidos Procesados" value={stats.orders || 0} trend={stats.trends?.orders || '0%'} color="#FEFCBF" icon={<ShoppingBag className="w-5 h-5 text-yellow-500" />} />
+                <KPICard title="Ingresos Generados" value={`€${(stats.revenue || 0).toFixed(2)}`} trend={stats.trends?.revenue || '0%'} color="#C6F6D5" icon={<TrendingUp className="w-5 h-5 text-green-500" />} />
               </div>
               <div className="bg-white p-6 rounded-3xl border border-[#F0F2F5] shadow-sm">
                 <h3 className="text-[16px] font-extrabold text-[#1A202C] mb-4">Mapa de Restaurantes Registrados</h3>
@@ -653,10 +658,10 @@ export default function SuperAdminPage() {
           {!fetchError && activeTab === "Estadísticas" && (
             <div className="mt-6 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KPICard title="Usuarios Totales" value={stats.users || 0} trend="+5%" color="#FF6B35" icon={<Users className="w-5 h-5 text-white" />} />
-                <KPICard title="Restaurantes" value={stats.restaurants || 0} trend="+2%" color="#6C5DD3" icon={<Store className="w-5 h-5 text-white" />} />
-                <KPICard title="Pedidos Globales" value={stats.orders || 0} trend="+12%" color="#009DE0" icon={<ShoppingBag className="w-5 h-5 text-white" />} />
-                <KPICard title="Ingresos Brutos" value={`€${(stats.revenue || 0).toFixed(2)}`} trend="+8%" color="#38A169" icon={<TrendingUp className="w-5 h-5 text-white" />} />
+                <KPICard title="Usuarios Totales" value={stats.users || 0} trend={stats.trends?.users || '0%'} color="#FF6B35" icon={<Users className="w-5 h-5 text-white" />} />
+                <KPICard title="Restaurantes" value={stats.restaurants || 0} trend={stats.trends?.restaurants || '0%'} color="#6C5DD3" icon={<Store className="w-5 h-5 text-white" />} />
+                <KPICard title="Pedidos Globales" value={stats.orders || 0} trend={stats.trends?.orders || '0%'} color="#009DE0" icon={<ShoppingBag className="w-5 h-5 text-white" />} />
+                <KPICard title="Ingresos Brutos" value={`€${(stats.revenue || 0).toFixed(2)}`} trend={stats.trends?.revenue || '0%'} color="#38A169" icon={<TrendingUp className="w-5 h-5 text-white" />} />
               </div>
               <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm">
                 <div className="flex justify-between items-center mb-6">
@@ -1204,6 +1209,66 @@ export default function SuperAdminPage() {
                   </div>
                 </div>
 
+              </div>
+
+              {/* Marketing & Analytics */}
+              <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm space-y-4 md:col-span-2">
+                <h3 className="font-extrabold text-[16px] text-[#1A202C] mb-1">Google & Marketing</h3>
+                <p className="text-[12px] text-[#A0AEC0] mb-4">Conecta tus herramientas de seguimiento y publicidad de Google.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Google Analytics 4 (Measurement ID)</label>
+                    <input value={platformConfig.googleAnalyticsId || ''} onChange={e => setPlatformConfig((p:any) => ({ ...p, googleAnalyticsId: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35] font-mono text-[12px]" placeholder="G-XXXXXXXXXX" />
+                    <p className="text-[11px] text-[#A0AEC0] mt-1">Tu Measurement ID de Google Analytics 4.</p>
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Google Tag Manager (GTM)</label>
+                    <input value={platformConfig.googleTagManagerId || ''} onChange={e => setPlatformConfig((p:any) => ({ ...p, googleTagManagerId: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35] font-mono text-[12px]" placeholder="GTM-XXXXXXX" />
+                    <p className="text-[11px] text-[#A0AEC0] mt-1">Gestiona todos tus tags desde un solo contenedor.</p>
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Google Ads (Conversion ID)</label>
+                    <input value={platformConfig.googleAdsId || ''} onChange={e => setPlatformConfig((p:any) => ({ ...p, googleAdsId: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35] font-mono text-[12px]" placeholder="AW-XXXXXXXXXX" />
+                    <p className="text-[11px] text-[#A0AEC0] mt-1">ID de conversión para tus campañas de Google Ads.</p>
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Meta Pixel (Facebook Ads)</label>
+                    <input value={platformConfig.metaPixelId || ''} onChange={e => setPlatformConfig((p:any) => ({ ...p, metaPixelId: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35] font-mono text-[12px]" placeholder="123456789" />
+                    <p className="text-[11px] text-[#A0AEC0] mt-1">ID de píxel de Meta para seguimiento de Facebook/Instagram Ads.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* SEO Global */}
+              <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm space-y-4 md:col-span-2">
+                <h3 className="font-extrabold text-[16px] text-[#1A202C] mb-1">SEO Global</h3>
+                <p className="text-[12px] text-[#A0AEC0] mb-4">Metadatos que afectan el posicionamiento de toda la plataforma.</p>
+                <div>
+                  <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Título SEO Global</label>
+                  <input value={platformConfig.seoTitle || ''} onChange={e => setPlatformConfig((p:any) => ({ ...p, seoTitle: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35]" placeholder="Tastio — Pide tu comida favorita en minutos" />
+                </div>
+                <div>
+                  <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Descripción SEO Global</label>
+                  <textarea value={platformConfig.seoDescription || ''} onChange={e => setPlatformConfig((p:any) => ({ ...p, seoDescription: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35] resize-none"
+                    rows={3} placeholder="La plataforma de delivery más rápida de tu ciudad. Pide a tus restaurantes favoritos desde casa." />
+                </div>
+              </div>
+
+              {/* Comisión de plataforma */}
+              <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm space-y-4">
+                <h3 className="font-extrabold text-[16px] text-[#1A202C] mb-4">Comisión de Plataforma</h3>
+                <div>
+                  <label className="text-[12px] font-bold text-[#718096] uppercase tracking-wider block mb-2">Comisión Global (%)</label>
+                  <input type="number" min="0" max="100" step="0.5" value={platformConfig.platformCommission || 0} onChange={e => setPlatformConfig((p:any) => ({ ...p, platformCommission: e.target.value }))}
+                    className="w-full px-4 py-3 rounded-xl border border-[#E2E8F0] text-[14px] outline-none focus:border-[#FF6B35]" />
+                  <p className="text-[11px] text-[#A0AEC0] mt-1">Porcentaje que Tastio retiene de cada pedido procesado.</p>
+                </div>
               </div>
               <div className="flex justify-end pt-4">
                 <button onClick={handleSaveConfig} disabled={savingConfig}

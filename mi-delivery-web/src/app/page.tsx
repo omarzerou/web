@@ -45,7 +45,7 @@ const CAT_GRID = [
 
 // ─── RESTAURANT CARD ─────────────────────────────────────────────────────────
 function RestaurantCard({ rest }: { rest: any }) {
-  const href = `/restaurant/${rest.id}`;
+  const href = `/restaurant/${rest.slug || rest.id}`;
   const imgSrc = rest.img || rest.imageUrl || "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=640&h=400&fit=crop";
 
   let displayRating = rest.rating || "9.0";
@@ -57,11 +57,11 @@ function RestaurantCard({ rest }: { rest: any }) {
   }
 
   return (
-    <Link href={href} className="block bg-white rounded-2xl overflow-hidden border border-[#EFEFEF] shadow-sm hover:shadow-[0_8px_32px_rgba(0,0,0,0.10)] hover:-translate-y-1 transition-all duration-300 group">
+    <Link href={href} className="relative block bg-white rounded-2xl overflow-hidden border border-[#EFEFEF] shadow-sm hover:shadow-[0_8px_32px_rgba(0,0,0,0.10)] hover:-translate-y-1 transition-all duration-300 group">
       {/* Photo */}
       <div className="relative h-[180px] overflow-hidden bg-[#F5F5F5]">
         <img src={imgSrc} alt={rest.name} className="w-full h-full object-cover group-hover:scale-[1.06] transition-transform duration-500" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent pointer-events-none" />
         {rest.badge && (
           <span className="absolute top-3 left-3 flex items-center gap-1 bg-white/90 backdrop-blur-sm text-[#009DE0] text-[11px] font-bold px-2.5 py-1 rounded-lg shadow-sm">
             <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
@@ -71,6 +71,14 @@ function RestaurantCard({ rest }: { rest: any }) {
           </span>
         )}
       </div>
+      
+      {/* Halal Badge */}
+      {(rest.name.toLowerCase().includes("paloma") || (rest.description && rest.description.toLowerCase().includes("halal"))) && (
+        <div className="absolute right-4 top-[160px] w-10 h-10 bg-[#1e7b39] rounded-full flex items-center justify-center text-white text-[16px] shadow-sm z-10" style={{ fontFamily: "Arial, sans-serif", lineHeight: "1" }}>
+          حلال
+        </div>
+      )}
+
       {/* Body */}
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-1">
@@ -289,7 +297,7 @@ export default function HomePage() {
                     </div>
                   ) : (
                     results.slice(0, 5).map((r, i) => (
-                      <Link key={i} href={`/restaurant/${r.id}`}
+                      <Link key={i} href={`/restaurant/${r.slug || r.id}`}
                         className="flex items-center gap-3 px-4 py-3 hover:bg-[#FFF8F5] border-b border-[#F5F5F5] last:border-b-0 no-underline transition-colors">
                         <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0">
                           <img src={r.img || r.imageUrl} alt={r.name} className="w-full h-full object-cover" />

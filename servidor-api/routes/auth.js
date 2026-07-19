@@ -26,14 +26,21 @@ router.post('/sync', authLimiter, validarTokenFirebase, async (req, res) => {
   const phone = sanitize(req.body.phone) || null;
   const address = sanitize(req.body.address) || null;
   try {
+    let isNew = false;
     let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
+      // Usuario nuevo: crear con los datos que vengan
+      isNew = true;
       user = await prisma.user.create({ data: { email, name, role: 'CLIENT', phone, address } });
     } else {
-      user = await prisma.user.update({ where: { email }, data: { phone, address } });
+      // Usuario existente: SOLO actualizar phone/address si vienen con valor en esta llamada
+      // No sobreescribir con null si ya tenía datos guardados
+      const updateData = { name };
+      if (phone !== null) updateData.phone = phone;
+      if (address !== null) updateData.address = address;
+      user = await prisma.user.update({ where: { email }, data: updateData });
     }
-    // NUNCA devolver info sensible de otros usuarios
-    res.json({ id: user.id, email: user.email, name: user.name, role: user.role, phone: user.phone, address: user.address });
+    res.json({ id: user.id, email: user.email, name: user.name, role: user.role, phone: user.phone, address: user.address, isNew });
   } catch (error) {
     console.error('[auth/sync]', error.message);
     res.status(500).json({ error: 'Error de sincronización' });
@@ -46,8 +53,9 @@ router.post('/sync-restaurant', authLimiter, validarTokenFirebase, async (req, r
   const userName = sanitize(req.body.userName) || email.split('@')[0];
   const restaurantName = sanitize(req.body.restaurantName);
   const restaurantAddress = sanitize(req.body.restaurantAddress);
-  const subscriptionPlan = req.body.subscriptionPlan || 'MONTHLY';
-  const paymentConfigured = Boolean(req.body.paymentConfigured);
+  // Vulnerabilidad Cerrada: Se forzan valores seguros por defecto para nuevos registros.
+  const subscriptionPlan = 'FREE';
+  const paymentConfigured = false;
 
   if (!restaurantName || !restaurantAddress) {
     return res.status(400).json({ error: 'Nombre y dirección del restaurante son obligatorios' });
@@ -58,11 +66,24 @@ router.post('/sync-restaurant', authLimiter, validarTokenFirebase, async (req, r
 
   try {
     let user = await prisma.user.findUnique({ where: { email } });
+
+    // ── [PARCHE #2] Bloquear registro duplicado de restaurante ──────────────
+    if (user) {
+      const existingRest = await prisma.restaurant.findFirst({ where: { ownerId: user.id } });
+      if (existingRest) {
+        return res.status(409).json({ error: 'Ya tienes un restaurante registrado. Contacta con soporte si necesitas ayuda.' });
+      }
+    }
+
+    // ── [PARCHE #2] Crear usuario con rol correcto o elevar si ya era CLIENT ─
     if (!user) {
+      // Usuario nuevo: rol RESTAURANT_OWNER desde el principio
       user = await prisma.user.create({ data: { email, name: userName, role: 'RESTAURANT_OWNER' } });
-    } else {
+    } else if (user.role === 'CLIENT') {
+      // Usuario existente que era CLIENT: elevar a RESTAURANT_OWNER
       user = await prisma.user.update({ where: { email }, data: { role: 'RESTAURANT_OWNER' } });
     }
+    // Si ya era ADMIN o RESTAURANT_OWNER, no se toca el rol
 
     const restaurant = await prisma.restaurant.create({
       data: {

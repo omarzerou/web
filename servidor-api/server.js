@@ -49,6 +49,7 @@ const rutasAuth = require('./routes/auth');
 const rutasAdmin = require('./routes/admin');
 const rutasSuperAdmin = require('./routes/superadmin');
 const rutasChat = require('./routes/chat');
+const rutasOtp = require('./routes/otp');
 
 // ──────────────────────────────────────────────────────────────
 // APP Y MIDDLEWARES
@@ -70,7 +71,7 @@ app.use(cors({
     }
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Restaurant-Id', 'X-Impersonate-Restaurant'],
   credentials: true,
 }));
 
@@ -107,11 +108,13 @@ app.use('/api/orders', rutasPedidos);
 app.use('/api/pedidos', rutasPedidos);
 
 app.use('/api/restaurant-admin', rutasAdmin);
+app.use('/api/dashboard', rutasAdmin);
 app.use('/api/chat', rutasChat);
 
 // Alias para el panel general
 app.use('/api/superadmin', rutasSuperAdmin);
 app.use('/api/admin', rutasSuperAdmin);
+app.use('/api/otp', rutasOtp);
 
 // ──────────────────────────────────────────────────────────────
 // MANEJO DE ERRORES GLOBAL

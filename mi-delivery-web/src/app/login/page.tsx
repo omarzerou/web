@@ -40,6 +40,15 @@ export default function LoginPage() {
   };
 
   const redirectBasedOnRole = (user: any) => {
+    // Solo ir al onboarding si es usuario nuevo O si le faltan datos (nunca los ha rellenado)
+    if (!user) {
+      router.push("/onboarding");
+      return;
+    }
+    if (user.isNew || (!user.phone && !user.address)) {
+      router.push("/onboarding");
+      return;
+    }
     if (tab === "restaurante") {
       router.push("/admin");
     } else {

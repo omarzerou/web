@@ -381,7 +381,7 @@ export default function MapPage() {
               </div>
             </div>
           </div>
-          <Link href={`/restaurant/${selected.id}`} style={{
+          <Link href={`/restaurant/${selected.slug || selected.id}`} style={{
             display: "block", marginTop: 14,
             background: "linear-gradient(135deg,#FF6B35,#FFBE00)",
             color: "#fff", fontWeight: 800, fontSize: 15, textAlign: "center",

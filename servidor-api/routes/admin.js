@@ -12,10 +12,18 @@ const sanitize = (str) => {
   return str.trim().replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').substring(0, 2000);
 };
 
+// [PARCHE #1] Validador de formato para el header x-restaurant-id
+// Previene inyección de strings arbitrarios o excesivamente largos en las queries
+const isValidId = (str) => typeof str === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(str);
+
 // Estadísticas propias
 router.get('/stats', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const rawRestId = req.headers['x-restaurant-id'];
+    const reqRestId = isValidId(rawRestId) ? rawRestId : null; // [PARCHE #1]
+    const restaurant = reqRestId
+      ? await prisma.restaurant.findFirst({ where: { OR: [{ id: reqRestId }, { slug: reqRestId }], ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'No tienes restaurante asignado' });
 
     const [totalOrders, revenueObj, customers] = await Promise.all([
@@ -53,12 +61,16 @@ router.post('/payment', validarTokenFirebase, soloRestaurantOwner, async (req, r
 // Pedidos propios
 router.get('/orders', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const rawRestId = req.headers['x-restaurant-id'];
+    const reqRestId = isValidId(rawRestId) ? rawRestId : null; // [PARCHE #1]
+    const restaurant = reqRestId
+      ? await prisma.restaurant.findFirst({ where: { OR: [{ id: reqRestId }, { slug: reqRestId }], ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'Sin restaurante asignado' });
 
     const orders = await prisma.order.findMany({
       where: { restaurantId: restaurant.id },
-      include: { client: { select: { id: true, name: true, email: true } }, items: { include: { product: true } } },
+      include: { client: { select: { id: true, name: true, email: true, phone: true } }, items: { include: { product: true } } },
       orderBy: { createdAt: 'desc' },
       take: 100
     });
@@ -69,10 +81,42 @@ router.get('/orders', validarTokenFirebase, soloRestaurantOwner, async (req, res
   }
 });
 
+// Dashboard del restaurante (ruta usada por el panel web)
+router.get('/my-restaurant', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
+  try {
+    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    if (!restaurant) return res.status(404).json({ error: 'Sin restaurante asignado' });
+
+    const orders = await prisma.order.findMany({
+      where: { restaurantId: restaurant.id },
+      include: {
+        client: { select: { id: true, name: true, email: true, phone: true } },
+        items: { include: { product: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+
+    res.json({
+      id: restaurant.id,
+      name: restaurant.name,
+      status: restaurant.status,
+      orders
+    });
+  } catch (error) {
+    console.error('[dashboard/my-restaurant]', error.message);
+    res.status(500).json({ error: 'Error obteniendo datos del restaurante' });
+  }
+});
+
 // Productos propios
 router.get('/products', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const rawRestId = req.headers['x-restaurant-id'];
+    const reqRestId = isValidId(rawRestId) ? rawRestId : null; // [PARCHE #1]
+    const restaurant = reqRestId
+      ? await prisma.restaurant.findFirst({ where: { OR: [{ id: reqRestId }, { slug: reqRestId }], ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'Sin restaurante' });
 
     const products = await prisma.product.findMany({
@@ -89,7 +133,11 @@ router.get('/products', validarTokenFirebase, soloRestaurantOwner, async (req, r
 // Pedidos por día de la semana (últimos 7 días) — para gráfica
 router.get('/chart-data', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const rawRestId = req.headers['x-restaurant-id'];
+    const reqRestId = isValidId(rawRestId) ? rawRestId : null; // [PARCHE #1]
+    const restaurant = reqRestId
+      ? await prisma.restaurant.findFirst({ where: { OR: [{ id: reqRestId }, { slug: reqRestId }], ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'Sin restaurante' });
 
     const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -125,9 +173,13 @@ router.put('/profile', validarTokenFirebase, soloRestaurantOwner, async (req, re
   const address = sanitize(req.body.address);
   const imageUrl = sanitize(req.body.imageUrl);
   const status = req.body.status;
-  
+
   try {
-    const restaurant = await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    const rawRestId = req.headers['x-restaurant-id'];
+    const reqRestId = isValidId(rawRestId) ? rawRestId : null; // [PARCHE #1]
+    const restaurant = reqRestId
+      ? await prisma.restaurant.findFirst({ where: { OR: [{ id: reqRestId }, { slug: reqRestId }], ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'No tienes restaurante asignado' });
 
     const updated = await prisma.restaurant.update({
@@ -149,8 +201,25 @@ router.put('/profile', validarTokenFirebase, soloRestaurantOwner, async (req, re
 // Actualizar configuración
 router.put('/settings', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
-    res.json({ message: 'Ajustes guardados correctamente' });
+    const rawRestId = req.headers['x-restaurant-id'];
+    const reqRestId = isValidId(rawRestId) ? rawRestId : null; // [PARCHE #1]
+    const restaurant = reqRestId
+      ? await prisma.restaurant.findFirst({ where: { OR: [{ id: reqRestId }, { slug: reqRestId }], ownerId: req.dbUser.id } })
+      : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
+    if (!restaurant) return res.status(404).json({ error: 'No tienes restaurante asignado' });
+
+    const { deliveryFee, minOrder, coverageRadius, bufferTime, operatingHours } = req.body;
+    const data = {};
+    if (deliveryFee !== undefined) data.deliveryFee = parseFloat(deliveryFee) || 0;
+    if (minOrder !== undefined) data.minOrder = parseFloat(minOrder) || 0;
+    if (coverageRadius !== undefined) data.coverageRadius = parseFloat(coverageRadius) || 0;
+    if (bufferTime !== undefined) data.bufferTime = parseInt(bufferTime) || 30;
+    if (operatingHours !== undefined) data.operatingHours = operatingHours;
+
+    const updated = await prisma.restaurant.update({ where: { id: restaurant.id }, data });
+    res.json({ message: 'Ajustes guardados correctamente', restaurant: updated });
   } catch (error) {
+    console.error('[settings PUT]', error.message);
     res.status(500).json({ error: 'Error guardando ajustes' });
   }
 });

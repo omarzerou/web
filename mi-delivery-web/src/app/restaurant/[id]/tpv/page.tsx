@@ -4,6 +4,9 @@ import { useState, useEffect, use } from "react";
 import { Product, RestInfo, CartItem } from "@/lib/types";
 import { ArrowLeft, Check, X, Plus, Minus, Printer, Banknote, CreditCard, Trash2, Search } from "lucide-react";
 import Link from "next/link";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { useRouter } from "next/navigation";
 
 // ── CUSTOMIZATION MODAL (TPV Version) ─────────────────────────────────────────
 function TpvCustomModal({ product, restId, restName, onClose, onAdd }: {
@@ -99,6 +102,8 @@ function TpvCustomModal({ product, restId, restName, onClose, onAdd }: {
 export default function TPVPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const id = resolvedParams.id;
+  const router = useRouter();
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [rest, setRest] = useState<RestInfo | null>(null);
   
   const [ticket, setTicket] = useState<CartItem[]>([]);
@@ -110,38 +115,87 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
   const [cashGiven, setCashGiven] = useState<string>("");
 
   useEffect(() => {
-    fetch("http://localhost:4000/api/restaurants")
-      .then(res => res.json())
-      .then(data => {
-        if (!Array.isArray(data)) return;
-        const apiRest = data.find((r: any) => r.id === id);
-        if (apiRest) {
-          const categories = Array.from(new Set(apiRest.products.map((p: any) => p.category || "Sin Categoría")));
-          const menu = categories.map((catName, idx) => ({
-            id: `cat_${idx}`,
-            name: catName as string,
-            items: apiRest.products.filter((p: any) => (p.category || "Sin Categoría") === catName).map((p: any) => ({
-              id: p.id,
-              name: p.name,
-              desc: p.description || "",
-              price: p.price,
-              img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
-              sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
-            }))
-          }));
-          setRest({
-            id,
-            name: apiRest.name,
-            tagline: apiRest.address || "Local asociado a Tastio",
-            heroImg: apiRest.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
-            time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
-            menu
-          });
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        router.push("/");
+        return;
+      }
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("http://localhost:4000/api/restaurant-admin/stats", {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "X-Restaurant-Id": id
+          }
+        });
+        if (res.ok) {
+          setIsAuthorized(true);
+          fetch("http://localhost:4000/api/restaurants")
+            .then(res => res.json())
+            .then(data => {
+              if (!Array.isArray(data)) return;
+              const apiRest = data.find((r: any) => r.slug === id || r.id === id);
+              if (apiRest) {
+                const categoryOrder = ["Más Vendidos", "Menús", "Bandejas", "Camperos", "Hamburguesas", "Kebabs", "Shawarmas", "Chawarmas", "Pizzas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas"];
+                // Filter out Extras — they are embedded inside sectionsData of main products
+                const visibleProducts = apiRest.products.filter((p: any) => p.category !== 'Extras');
+                let categories = Array.from(new Set(visibleProducts.map((p: any) => p.category || "Sin Categoría"))) as string[];
+                categories.sort((a, b) => {
+                  const iA = categoryOrder.indexOf(a);
+                  const iB = categoryOrder.indexOf(b);
+                  if (iA === -1 && iB === -1) return a.localeCompare(b);
+                  if (iA === -1) return 1;
+                  if (iB === -1) return -1;
+                  return iA - iB;
+                });
+                const mapProduct = (p: any) => ({
+                  id: p.id,
+                  name: p.name,
+                  desc: p.description || "",
+                  price: p.price,
+                  img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
+                  sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
+                });
+                // "Más Vendidos" tab: featured products first, then all visible
+                const bestSellers = visibleProducts
+                  .filter((p: any) => p.isFeatured)
+                  .map(mapProduct);
+                const menu: any[] = [];
+                if (bestSellers.length > 0) {
+                  menu.push({ id: 'cat_best', name: 'Más Vendidos', items: bestSellers });
+                }
+                categories.forEach((catName, idx) => {
+                  menu.push({
+                    id: `cat_${idx}`,
+                    name: catName,
+                    items: visibleProducts
+                      .filter((p: any) => (p.category || "Sin Categoría") === catName)
+                      .sort((a: any, b: any) => (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0))
+                      .map(mapProduct)
+                  });
+                });
+                setRest({
+                  id: apiRest.id,
+                  name: apiRest.name,
+                  tagline: apiRest.address || "Local asociado a Tastio",
+                  heroImg: apiRest.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
+                  time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
+                  menu
+                });
+              }
+            })
+            .catch(console.error);
+        } else {
+          router.push("/");
         }
-      })
-      .catch(console.error);
-  }, [id]);
+      } catch (e) {
+        router.push("/");
+      }
+    });
+    return () => unsub();
+  }, [id, router]);
 
+  if (!isAuthorized) return null; // Efecto Anti-Flash
   if (!rest) return <div className="min-h-screen bg-[#F0F0F0] flex items-center justify-center font-bold">Cargando TPV...</div>;
 
   // Ticket calculations
@@ -158,7 +212,7 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
     if (existing) {
       setTicket(ticket.map(c => c.cid === existing.cid ? { ...c, qty: c.qty + 1 } : c));
     } else {
-      setTicket([...ticket, { cid: Math.random().toString(36).slice(2), pid: product.id, name: product.name, basePrice: product.price, extrasPrice: 0, img: product.img, qty: 1, extras: [], restId: id, restName: rest.name }]);
+      setTicket([...ticket, { cid: Math.random().toString(36).slice(2), pid: product.id, name: product.name, basePrice: product.price, extrasPrice: 0, img: product.img, qty: 1, extras: [], restId: rest.id, restName: rest.name }]);
     }
   };
 
@@ -253,8 +307,9 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
               <p className="text-[13px] font-medium text-[#6B7280]">Terminal de Punto de Venta</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
              <div className="bg-[#FFF3EE] text-[#FF6B35] px-4 py-2 rounded-xl font-bold text-[14px]">Modo Empleado</div>
+             <Link href="/admin" className="px-4 py-2 bg-white border border-[#E5E7EB] rounded-xl font-bold text-[14px] text-[#4B5563] hover:bg-[#F9FAFB] transition-colors">Salir al Panel</Link>
           </div>
         </div>
 

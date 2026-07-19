@@ -45,6 +45,11 @@ export default function RegisterPage() {
   const [loading,     setLoading]     = useState(false);
   const [googleLoad,  setGoogleLoad]  = useState(false);
 
+  // ── OTP State ──
+  const [otpStep, setOtpStep] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpError, setOtpError] = useState("");
+
   // ── Leer query params ──
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -84,7 +89,7 @@ export default function RegisterPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ email: cred.user.email }),
       }).catch(() => {});
-      router.push("/");
+      router.push("/onboarding");
     } catch {
       setError("No se pudo registrar con Google");
       setGoogleLoad(false);
@@ -97,20 +102,15 @@ export default function RegisterPage() {
     setLoading(true);
     setError("");
     try {
-      const cred  = await createUserWithEmailAndPassword(auth, cEmail, cPassword);
-      await updateProfile(cred.user, { displayName: cName });
-      const token = await cred.user.getIdToken();
-      await fetch("http://localhost:4000/api/auth/sync", {
+      const res = await fetch("http://localhost:4000/api/otp/send", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: cEmail, name: cName, phone: cPhone, address: cAddress }),
-      }).catch(() => {});
-      router.push("/");
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cEmail })
+      });
+      if (!res.ok) throw new Error("No se pudo enviar el correo de verificación");
+      setOtpStep(true);
     } catch (err: any) {
-      setError(err.code === "auth/email-already-in-use"
-        ? "Ese correo ya está registrado"
-        : "Error al crear la cuenta. Inténtalo de nuevo."
-      );
+      setError(err.message || "Error al enviar el código. Inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -122,27 +122,78 @@ export default function RegisterPage() {
     setLoading(true);
     setError("");
     try {
-      const cred  = await createUserWithEmailAndPassword(auth, rEmail, rPassword);
-      const token = await cred.user.getIdToken();
-      
-      const res = await fetch("http://localhost:4000/api/auth/sync-restaurant", {
+      const res = await fetch("http://localhost:4000/api/otp/send", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userName: rOwner, restaurantName: rName, restaurantAddress: rAddress, subscriptionPlan: rPlan, paymentConfigured: !!rCard }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: rEmail })
       });
-
-      if (!res.ok) throw new Error("Error registrando restaurante en el servidor");
-
-      alert("¡Solicitud enviada! Tu restaurante está en revisión por un administrador.");
-      router.push("/admin");
+      if (!res.ok) throw new Error("No se pudo enviar el correo de verificación");
+      setOtpStep(true);
     } catch (err: any) {
-      setError(err.code === "auth/email-already-in-use"
-        ? "Ese correo ya está registrado"
-        : "Error al registrar el local. Inténtalo de nuevo."
-      );
+      setError(err.message || "Error al enviar el código. Inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
+  };
+
+  // ── Verify OTP & Create User ──
+  const handleVerifyOtp = async () => {
+    if (otpCode.length !== 6) {
+      setOtpError("El código debe tener 6 dígitos");
+      return;
+    }
+    setLoading(true);
+    setOtpError("");
+    try {
+      const email = tab === "cliente" ? cEmail : rEmail;
+      const res = await fetch("http://localhost:4000/api/otp/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code: otpCode })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Código incorrecto");
+      }
+
+      // Código verificado, ahora creamos el usuario
+      if (tab === "cliente") {
+        const cred = await createUserWithEmailAndPassword(auth, cEmail, cPassword);
+        await updateProfile(cred.user, { displayName: cName });
+        const token = await cred.user.getIdToken();
+        await fetch("http://localhost:4000/api/auth/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ email: cEmail, name: cName, phone: cPhone, address: cAddress }),
+        }).catch(() => {});
+        router.push("/");
+      } else {
+        const cred = await createUserWithEmailAndPassword(auth, rEmail, rPassword);
+        const token = await cred.user.getIdToken();
+        const resSync = await fetch("http://localhost:4000/api/auth/sync-restaurant", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ userName: rOwner, restaurantName: rName, restaurantAddress: rAddress }),
+        });
+        if (!resSync.ok) throw new Error("Error registrando restaurante en el servidor");
+        alert("¡Solicitud enviada! Tu restaurante está en revisión por un administrador.");
+        router.push("/admin");
+      }
+    } catch (e: any) {
+      if (e.code === "auth/email-already-in-use") {
+         setOtpError("Ese correo ya está registrado en la plataforma");
+      } else {
+         setOtpError(e.message || "Error al verificar código");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelOtp = () => {
+    setOtpStep(false);
+    setOtpCode("");
+    setOtpError("");
   };
 
   // ── Shared input style ──
@@ -184,8 +235,44 @@ export default function RegisterPage() {
           ))}
         </div>
 
-        {/* ══════ CLIENTE TAB ══════ */}
-        {tab === "cliente" && (
+        {otpStep ? (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-[13px] font-semibold text-[#555] mb-1.5 text-center">
+                Introduce el código de 6 dígitos que hemos enviado a {tab === 'cliente' ? cEmail : rEmail}
+              </label>
+              <input
+                type="text"
+                maxLength={6}
+                value={otpCode}
+                onChange={e => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                className="w-full h-12 text-center text-2xl tracking-[0.5em] font-bold border-2 border-[#F0F0F0] rounded-xl focus:border-[#FF6B35] focus:outline-none"
+                placeholder="000000"
+              />
+            </div>
+            
+            {otpError && <div className="text-red-500 text-[13px] text-center">{otpError}</div>}
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleCancelOtp}
+                className="flex-1 py-3 bg-[#F0F0F0] text-[#555] rounded-xl font-bold text-[14px]"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleVerifyOtp}
+                disabled={loading || otpCode.length !== 6}
+                className="flex-[2] bg-gradient-to-r from-[#FF6B35] to-[#FF8C55] text-white py-3 rounded-xl font-bold text-[14px] disabled:opacity-60"
+              >
+                {loading ? "Verificando..." : "Verificar Código"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* ══════ CLIENTE TAB ══════ */}
+            {tab === "cliente" && (
           <>
             {/* Google */}
             <button onClick={handleGoogle} disabled={googleLoad || loading}
@@ -349,6 +436,8 @@ export default function RegisterPage() {
               }
             </button>
           </form>
+        )}
+        </>
         )}
       </div>
 
