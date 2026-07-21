@@ -124,7 +124,7 @@ export default function MapView({ restaurants, selected, onSelect, center }: Map
             </div>
             <div style="font-size:12px;color:#AAAAAA;margin-bottom:4px">📍 ${r.address}</div>
             <div style="font-size:12px;color:#AAAAAA;margin-bottom:10px">🕐 ${r.deliveryTime} min de entrega</div>
-            <a href="/restaurant/${r.slug || r.id}"
+            <a href="/restaurant/${(r as any).slug || r.id}"
               style="display:block;background:linear-gradient(135deg,#FF6B35,#FFBE00);color:#fff;
                      font-weight:800;font-size:13px;text-align:center;padding:10px;
                      border-radius:10px;text-decoration:none">

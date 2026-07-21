@@ -13,7 +13,7 @@ const { validarTokenFirebase, verificarPropietarioRestaurante } = require('../co
 // GET: Obtener todos los restaurantes (PÚBLICO)
 router.get('/', async (req, res) => {
     try {
-        const CATEGORY_ORDER = ["Menús", "Bandejas", "Camperos", "Hamburguesas", "Kebabs", "Shawarmas", "Chawarmas", "Pizzas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas", "Extras"];
+        const CATEGORY_ORDER = ["Hamburguesas", "Kebabs", "Menús", "Camperos", "Pizzas", "Bandejas", "Shawarmas", "Chawarmas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas", "Extras"];
 
         const restaurantes = await prisma.restaurant.findMany({
             orderBy: { id: 'asc' },

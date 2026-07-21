@@ -114,6 +114,11 @@ router.post('/', validarTokenFirebase, async (req, res) => {
             });
         }
 
+        // ── [SEGURIDAD EXTREMA] Añadir gastos de envío si es a domicilio ──
+        if (orderType === 'DELIVERY' && restaurant.deliveryFee) {
+            totalAmount += restaurant.deliveryFee;
+        }
+
         // Determinar dirección final
         let finalAddress = deliveryAddress;
         if (orderType === 'DELIVERY') {

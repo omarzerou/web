@@ -12,6 +12,7 @@ import {
 import { auth } from "@/lib/firebase";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import toast from 'react-hot-toast';
 import Link from "next/link";
 import {
   User, Mail, Lock, Phone, Store, Eye, EyeOff, ArrowRight, ChevronLeft, MapPin
@@ -176,7 +177,7 @@ export default function RegisterPage() {
           body: JSON.stringify({ userName: rOwner, restaurantName: rName, restaurantAddress: rAddress }),
         });
         if (!resSync.ok) throw new Error("Error registrando restaurante en el servidor");
-        alert("¡Solicitud enviada! Tu restaurante está en revisión por un administrador.");
+        toast.success("¡Solicitud enviada! Tu restaurante está en revisión por un administrador.");
         router.push("/admin");
       }
     } catch (e: any) {
@@ -204,11 +205,8 @@ export default function RegisterPage() {
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
       {/* Logo */}
-      <Link href="/" className="flex items-center gap-2 mb-8 no-underline">
-        <img src="/logo.png" alt="Tastio" className="w-9 h-9 object-contain" />
-        <span className="text-[22px] font-extrabold text-[#1B1B1B] tracking-tight">
-          Tasti<span className="text-[#FF6B35]">o</span>
-        </span>
+      <Link href="/" className="flex justify-center mb-8 no-underline">
+        <img src="/logo-tastio.png" alt="Tastio Logo" className="h-[64px] sm:h-[90px] scale-110 sm:scale-125 w-auto object-contain" />
       </Link>
 
       {/* Card */}

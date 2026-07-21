@@ -22,4 +22,7 @@ const adminAuth = getAuth(adminApp);
 const superAdminApp = getApps().find(a => a.name === "superadmin") || initializeApp(firebaseConfig, "superadmin");
 const superAdminAuth = getAuth(superAdminApp);
 
-export { app, auth, adminAuth, superAdminAuth };
+import { getStorage } from "firebase/storage";
+const storage = getStorage(app);
+
+export { app, auth, adminAuth, superAdminAuth, storage };

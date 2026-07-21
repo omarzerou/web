@@ -194,11 +194,35 @@ const CITY_COORDS: Record<string, [number, number]> = {
 
 // ─── PAGE ─────────────────────────────────────────────────────────────────────
 export default function MapPage() {
-  const [selected, setSelected] = useState<(typeof MAP_RESTAURANTS)[0] | null>(null);
+  const [restaurants, setRestaurants] = useState<any[]>([]);
+  const [selected, setSelected] = useState<any | null>(null);
   const [activeCategory, setActiveCategory] = useState("Todos");
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
 
   useEffect(() => {
+    fetch("http://localhost:4000/api/restaurants")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const mapped = data.map((r: any, index: number) => ({
+            id: r.id,
+            slug: r.slug,
+            name: r.name,
+            description: r.description || r.address || "Local asociado",
+            address: r.address || "Dirección no disponible",
+            category: r.categories?.[0] || "Hamburguesas",
+            deliveryTime: r.delivery || "15-30",
+            rating: r.rating || "Nuevo",
+            priceLevel: "€€",
+            img: r.imageUrl || "https://images.unsplash.com/photo-1529543544282-ea669407fca3?w=400&h=300&fit=crop",
+            lat: r.lat || (36.1330 + (index * 0.003)),
+            lng: r.lng || (-5.4510 - (index * 0.002))
+          }));
+          setRestaurants(mapped);
+        }
+      })
+      .catch(console.error);
+
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const city = params.get("city");
@@ -209,8 +233,8 @@ export default function MapPage() {
   }, []);
 
   const filtered = activeCategory === "Todos"
-    ? MAP_RESTAURANTS
-    : MAP_RESTAURANTS.filter(r => r.category === activeCategory);
+    ? restaurants
+    : restaurants.filter(r => r.category === activeCategory);
 
   return (
     <div className="map-page" style={{ fontFamily: "'Inter', system-ui, sans-serif", height: "100dvh", display: "flex", flexDirection: "column", background: "#F7F7F7" }}>

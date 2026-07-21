@@ -128,11 +128,8 @@ export default function LoginPage() {
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
       {/* Logo */}
-      <Link href="/" className="flex items-center gap-2 mb-8 no-underline">
-        <img src="/logo.png" alt="Tastio" className="w-9 h-9 object-contain" />
-        <span className="text-[22px] font-extrabold text-[#1B1B1B] tracking-tight">
-          Tasti<span className="text-[#FF6B35]">o</span>
-        </span>
+      <Link href="/" className="flex justify-center mb-8 no-underline">
+        <img src="/logo-tastio.png" alt="Tastio Logo" className="h-[64px] sm:h-[90px] scale-110 sm:scale-125 w-auto object-contain" />
       </Link>
 
       {/* Card */}

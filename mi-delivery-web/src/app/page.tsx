@@ -118,9 +118,10 @@ export default function HomePage() {
 
   // Location Modal State
   const [showLocModal, setShowLocModal] = useState(false);
-  const [step, setStep]                 = useState<"country" | "city">("country");
-  const [selectedCountry, setSelectedCountry] = useState("");
+  const [step, setStep]                 = useState<"country" | "city" | "neighborhood">("country");
   const [currentLocation, setCurrentLocation] = useState("Elegir ciudad");
+  const [selectedCountry, setSelectedCountry] = useState("");
+  const [localAvatar, setLocalAvatar] = useState<string | null>(null);
 
   const COUNTRIES = ["España", "Marruecos", "Francia", "Portugal", "Italia", "Alemania", "Suiza"];
   const CITIES: Record<string, string[]> = {
@@ -160,7 +161,14 @@ export default function HomePage() {
 
   // ── auth ──
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(setUser);
+    const unsub = auth.onAuthStateChanged((u) => {
+      setUser(u);
+      if (u?.uid) {
+        setLocalAvatar(localStorage.getItem(`tastio_avatar_${u.uid}`));
+      } else {
+        setLocalAvatar(null);
+      }
+    });
     return () => unsub();
   }, []);
 
@@ -245,7 +253,8 @@ export default function HomePage() {
   const results = q.length > 1
     ? restaurants.filter(r =>
         r.name.toLowerCase().includes(q) ||
-        (r.description || "").toLowerCase().includes(q)
+        (r.description || "").toLowerCase().includes(q) ||
+        (r.products || []).some((p: any) => p.name.toLowerCase().includes(q))
       )
     : restaurants;
 
@@ -257,16 +266,13 @@ export default function HomePage() {
         <div className="max-w-[1400px] mx-auto px-4 h-[60px] flex items-center gap-3">
 
           {/* LEFT – Logo */}
-          <Link href="/" className="flex items-center gap-2 shrink-0 no-underline">
-            <img src="/logo.png" alt="Tastio" className="w-[34px] h-[34px] object-contain" />
-            <span className="hidden sm:block text-[20px] font-extrabold text-[#1B1B1B] tracking-tight leading-none">
-              Tasti<span className="text-[#FF6B35]">o</span>
-            </span>
+          <Link href="/" className="flex items-center shrink-0 no-underline">
+            <img src="/logo-tastio.png" alt="Tastio Logo" className="h-[48px] sm:h-[64px] scale-110 sm:scale-125 w-auto object-contain" />
           </Link>
 
           {/* CENTER – Location + Search (takes remaining space) */}
           <div className="flex flex-1 items-center gap-2 relative" id="search-wrapper">
-            <button onClick={() => { setShowLocModal(true); setStep("country"); }} className="flex shrink-0 items-center gap-1.5 bg-[#F5F5F5] hover:bg-[#EBEBEB] text-[#1B1B1B] text-[12px] sm:text-[13px] font-semibold px-2.5 sm:px-3 py-2 rounded-xl border-none cursor-pointer transition-colors no-underline max-w-[110px] sm:max-w-none">
+            <button onClick={() => { setShowLocModal(true); setStep("country"); }} className="hidden md:flex shrink-0 items-center gap-1.5 bg-[#F5F5F5] hover:bg-[#EBEBEB] text-[#1B1B1B] text-[13px] font-semibold px-3 py-2 rounded-xl border-none cursor-pointer transition-colors no-underline">
               <MapPin className="w-3.5 h-3.5 shrink-0 text-[#FF6B35]" />
               <span className="truncate">{currentLocation}</span>
             </button>
@@ -332,8 +338,8 @@ export default function HomePage() {
             {user ? (
               <>
                 <Link href="/profile" className="hidden sm:flex items-center gap-2 bg-[#F5F5F5] hover:bg-[#EBEBEB] px-3 py-1.5 rounded-xl no-underline transition-colors">
-                  {user.photoURL ? (
-                    <img src={user.photoURL} alt="perfil" className="w-7 h-7 rounded-full object-cover border border-[#E8E8E8]" referrerPolicy="no-referrer" />
+                  {(localAvatar || user.photoURL) ? (
+                    <img src={localAvatar || user.photoURL || ""} alt="perfil" className="w-7 h-7 rounded-full object-cover border border-[#E8E8E8]" referrerPolicy="no-referrer" />
                   ) : (
                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[12px] font-bold shrink-0" style={{ background: "linear-gradient(135deg,#FF6B35,#FFBE00)" }}>
                       {(user.displayName || user.email || "U")[0].toUpperCase()}
@@ -345,9 +351,9 @@ export default function HomePage() {
                 </Link>
                 {/* Mobile: just avatar */}
                 <Link href="/profile" className="sm:hidden w-8 h-8 rounded-full overflow-hidden flex items-center justify-center no-underline shrink-0"
-                  style={{ background: user.photoURL ? "transparent" : "linear-gradient(135deg,#FF6B35,#FFBE00)" }}>
-                  {user.photoURL
-                    ? <img src={user.photoURL} alt="perfil" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  style={{ background: (localAvatar || user.photoURL) ? "transparent" : "linear-gradient(135deg,#FF6B35,#FFBE00)" }}>
+                  {(localAvatar || user.photoURL)
+                    ? <img src={localAvatar || user.photoURL || ""} alt="perfil" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     : <span className="text-white text-[12px] font-bold">{(user.displayName || user.email || "U")[0].toUpperCase()}</span>
                   }
                 </Link>
@@ -527,10 +533,9 @@ export default function HomePage() {
       <footer className="bg-white border-t border-[#EFEFEF] pt-12 pb-8">
         <div className="max-w-[1400px] mx-auto px-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-10 pb-10 border-b border-[#F5F5F5]">
-            <div className="col-span-2 md:col-span-1">
-              <div className="flex items-center gap-2 mb-4">
-                <img src="/logo.png" alt="Tastio" className="w-[28px] h-[28px] object-contain" />
-                <span className="text-[18px] font-extrabold text-[#1B1B1B]">Tasti<span className="text-[#FF6B35]">o</span></span>
+            <div className="md:w-1/3 mb-8 md:mb-0">
+              <div className="flex items-center mb-4">
+                <img src="/logo-tastio.png" alt="Tastio Logo" className="h-[56px] sm:h-[72px] scale-110 sm:scale-125 -ml-2 w-auto object-contain" />
               </div>
               <p className="text-[13px] text-[#888] leading-relaxed">Los mejores locales de tu ciudad, conectados contigo.</p>
             </div>

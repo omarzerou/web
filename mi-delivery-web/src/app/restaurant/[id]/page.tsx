@@ -5,6 +5,7 @@ import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import toast from 'react-hot-toast';
 import { ArrowLeft, Heart, ShoppingBag, Plus, Minus, X, Check, Clock, Star, MapPin, Search } from "lucide-react";
 
 import { Option, SecDef, Product, MenuCat, RestInfo, CartItem } from "@/lib/types";
@@ -44,7 +45,7 @@ function CustomModal({ product, restId, restName, onClose, onAdd }: {
 
     onAdd({ cid: Math.random().toString(36).slice(2), pid: product.id, name: product.name,
       basePrice: product.price, extrasPrice: ep, img: product.img, qty: 1,
-      extras: extrasLabels, restId, restName });
+      extras: extrasLabels, optionsIds: selIds, restId, restName });
     onClose();
   };
 
@@ -160,14 +161,16 @@ function CustomModal({ product, restId, restName, onClose, onAdd }: {
 }
 
 // ── CART DRAWER ───────────────────────────────────────────────────────────────
-function CartDrawer({ cart, restName, onClose, onQty, onOrder, orderType, setOrderType, paymentMethod, setPaymentMethod }: {
+function CartDrawer({ cart, restName, onClose, onQty, onOrder, orderType, setOrderType, paymentMethod, setPaymentMethod, deliveryFee }: {
   cart: CartItem[]; restName: string; onClose: () => void;
   onQty: (id: string, d: number) => void; onOrder: () => void;
   orderType: string; setOrderType: (t: string) => void;
   paymentMethod: string; setPaymentMethod: (t: string) => void;
+  deliveryFee: number;
 }) {
   const count = cart.reduce((c, i) => c + i.qty, 0);
-  const total = cart.reduce((c, i) => c + (i.basePrice + i.extrasPrice) * i.qty, 0);
+  const subtotal = cart.reduce((c, i) => c + (i.basePrice + i.extrasPrice) * i.qty, 0);
+  const total = orderType === 'DELIVERY' ? subtotal + deliveryFee : subtotal;
 
   return (
     <div className="fixed inset-0 z-[200] flex justify-end" onClick={onClose}>
@@ -216,9 +219,21 @@ function CartDrawer({ cart, restName, onClose, onQty, onOrder, orderType, setOrd
             <button onClick={() => setPaymentMethod('CASH')} className={`flex-1 py-2 rounded-lg transition-colors ${paymentMethod === 'CASH' ? 'bg-[var(--theme-card,#fff)] shadow-sm text-[#10B981]' : 'text-[var(--theme-text-sec,#888)] hover:text-[var(--theme-text-mute,#555)]'}`}>💵 Efectivo</button>
             <button onClick={() => setPaymentMethod('DATAPHONE')} className={`flex-1 py-2 rounded-lg transition-colors ${paymentMethod === 'DATAPHONE' ? 'bg-[var(--theme-card,#fff)] shadow-sm text-[#10B981]' : 'text-[var(--theme-text-sec,#888)] hover:text-[var(--theme-text-mute,#555)]'}`}>💳 Datáfono/Tarjeta</button>
           </div>
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-[14px] font-semibold text-[var(--theme-text-sec,#888)]">Total</span>
-            <span className="text-[22px] font-extrabold text-[var(--theme-text,#1B1B1B)]">€{total.toFixed(2)}</span>
+          <div className="space-y-2 mb-4">
+            <div className="flex justify-between text-[13px] text-[var(--theme-text-sec,#888)] font-medium">
+              <span>Subtotal</span>
+              <span>€{subtotal.toFixed(2)}</span>
+            </div>
+            {orderType === 'DELIVERY' && deliveryFee > 0 && (
+              <div className="flex justify-between text-[13px] text-[var(--theme-text-sec,#888)] font-medium">
+                <span>Gastos de envío</span>
+                <span>€{deliveryFee.toFixed(2)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between pt-2 border-t border-[#F5F5F5]">
+              <span className="text-[14px] font-semibold text-[var(--theme-text,#1B1B1B)]">Total</span>
+              <span className="text-[22px] font-extrabold text-[var(--theme-text,#1B1B1B)]">€{total.toFixed(2)}</span>
+            </div>
           </div>
           <button onClick={onOrder}
             className="w-full flex items-center justify-center gap-2 text-white font-bold text-[15px] py-4 rounded-2xl border-none cursor-pointer transition-all hover:-translate-y-[1px] hover:shadow-[0_4px_20px_rgba(255,107,53,0.35)]"
@@ -272,15 +287,19 @@ export default function RestaurantPage() {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, u => {
-      const uid = u ? u.uid : "guest";
-      setUserId(uid);
-      try {
-        const favs = JSON.parse(localStorage.getItem(`tastio_favorites_${uid}`) || "[]");
-        setLiked(favs.includes(id));
-      } catch (e) {}
+      setUserId(u ? u.uid : "guest");
     });
     return () => unsub();
-  }, [id]);
+  }, []);
+
+  useEffect(() => {
+    if (userId && rest?.id) {
+      try {
+        const favs = JSON.parse(localStorage.getItem(`tastio_favorites_${userId}`) || "[]");
+        setLiked(favs.includes(rest.id));
+      } catch (e) {}
+    }
+  }, [userId, rest?.id]);
 
   useEffect(() => {
     if (id) {
@@ -299,11 +318,16 @@ export default function RestaurantPage() {
               tagline: apiRest.address || "Local asociado a Tastio",
               subscriptionPlan: apiRest.subscriptionPlan,
               heroImg: apiRest.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
-              time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
+              time: "15-30 min", 
+              rating: "Nuevo", 
+              delivery: `€${(apiRest.deliveryFee ?? 1.99).toFixed(2)}`,
+              deliveryFee: apiRest.deliveryFee ?? 1.99,
+              minOrder: "€8.00", 
+              openUntil: "23:00",
               menu: (() => {
                 if (!apiRest.products || apiRest.products.length === 0) return [];
 
-                const categoryOrder = ["Menús", "Bandejas", "Camperos", "Hamburguesas", "Kebabs", "Shawarmas", "Chawarmas", "Pizzas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas", "Extras"];
+                const categoryOrder = ["Hamburguesas", "Kebabs", "Menús", "Camperos", "Pizzas", "Bandejas", "Shawarmas", "Chawarmas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas", "Extras"];
                 // Hide standalone "Extras" products — they live inside sectionsData of other products
                 const visibleProducts = apiRest.products.filter((p: any) => p.category !== 'Extras');
                 let categories = Array.from(new Set(visibleProducts.map((p: any) => p.category || "Sin Categoría"))) as string[];
@@ -315,6 +339,11 @@ export default function RestaurantPage() {
                   if (iB === -1) return -1;
                   return iA - iB;
                 });
+                const extrasProducts = apiRest.products
+                  .filter((p: any) => p.category === 'Extras')
+                  .map((p: any) => ({ id: p.id, label: p.name, price: p.price || 0 }));
+                const categoriesWithGlobalExtras = ["Hamburguesas", "Kebabs", "Bocadillos", "Camperos", "Pitas y Media Luna", "Shawarmas", "Tacos", "Chawarmas", "Menús"];
+                
                 return categories.map((catName, idx) => ({
                   id: `cat_${idx}`,
                   name: catName,
@@ -325,14 +354,27 @@ export default function RestaurantPage() {
                       if (b.isFeatured !== a.isFeatured) return b.isFeatured ? 1 : -1;
                       return 0;
                     })
-                    .map((p: any) => ({
-                      id: p.id,
-                      name: p.name,
-                      desc: p.description || "",
-                      price: p.price,
-                      img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
-                      sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
-                    }))
+                    .map((p: any) => {
+                      let sections = p.sectionsData ? JSON.parse(p.sectionsData) : undefined;
+                      const isFood = categoriesWithGlobalExtras.includes(p.category || "");
+                      if (!sections && isFood) {
+                        sections = [
+                          { id: "veg", title: "Verduras", options: [{id:"lechuga",label:"Lechuga",price:0},{id:"tomate",label:"Tomate",price:0},{id:"cebolla",label:"Cebolla",price:0}] },
+                          { id: "sauces", title: "Salsas", max: 2, options: [{id:"blanca",label:"Salsa Blanca",price:0},{id:"picante",label:"Salsa Picante",price:0},{id:"ketchup",label:"Kétchup",price:0},{id:"mayonesa",label:"Mayonesa",price:0}] }
+                        ];
+                        if (extrasProducts.length > 0) {
+                          sections.push({ id: "extras", title: "Añadir Extras", options: extrasProducts });
+                        }
+                      }
+                      return {
+                        id: p.id,
+                        name: p.name,
+                        desc: p.description || "",
+                        price: p.price,
+                        img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
+                        sections
+                      };
+                    })
                 }));
               })()
             });
@@ -372,16 +414,16 @@ export default function RestaurantPage() {
 
 
   const toggleLike = () => {
-    if (!userId) return;
+    if (!userId || !rest?.id) return;
     try {
       const favKey = `tastio_favorites_${userId}`;
       const favs: string[] = JSON.parse(localStorage.getItem(favKey) || "[]");
       let nextFavs;
-      if (favs.includes(id)) {
-        nextFavs = favs.filter(f => f !== id);
+      if (favs.includes(rest.id)) {
+        nextFavs = favs.filter(f => f !== rest.id);
         setLiked(false);
       } else {
-        nextFavs = [...favs, id];
+        nextFavs = [...favs, rest.id];
         setLiked(true);
       }
       localStorage.setItem(favKey, JSON.stringify(nextFavs));
@@ -391,13 +433,11 @@ export default function RestaurantPage() {
   const handleOrder = async () => {
     if (cart.length === 0) return;
     if (!userId || userId === "guest") {
-      alert("Debes iniciar sesión para realizar el pedido de forma segura.");
+      toast.error("Debes iniciar sesión para realizar el pedido de forma segura.");
       return;
     }
     setLoadingOrder(true);
     try {
-
-
       const user = auth.currentUser;
       if (!user) throw new Error("No user");
       const token = await user.getIdToken();
@@ -406,13 +446,13 @@ export default function RestaurantPage() {
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({
           restaurantId: rest!.id,
-          totalAmount: cartTotal,
+          totalAmount: finalTotal,
           items: cart.map(item => ({
             productId: item.pid,
             quantity: item.qty,
             price: item.basePrice + item.extrasPrice,
             extrasPrice: item.extrasPrice,
-            options: item.extras
+            options: item.optionsIds || []
           })),
           paymentMethod: paymentMethod,
           deliveryAddress: orderType === 'DELIVERY' ? "Dirección del usuario" : null,
@@ -425,10 +465,10 @@ export default function RestaurantPage() {
         setDrawer(false);
         setOrderSuccessId(data.id);
       } else {
-        alert("Hubo un error al procesar el pedido: " + (data.error || "Desconocido"));
+        toast.error("Hubo un error al procesar el pedido: " + (data.error || "Desconocido"));
       }
     } catch (e) {
-      alert("Error de conexión al servidor.");
+      toast.error("Error de conexión al servidor.");
     } finally {
       setLoadingOrder(false);
     }
@@ -480,8 +520,10 @@ export default function RestaurantPage() {
 
   const changeQty = (cid: string, delta: number) => updateCart(getCart(id).map(c => c.cid === cid ? { ...c, qty: c.qty + delta } : c).filter(c => c.qty > 0));
 
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
-  const cartTotal = cart.reduce((s, i) => s + (i.basePrice + i.extrasPrice) * i.qty, 0);
+  const cartCount = cart.reduce((c, i) => c + i.qty, 0);
+  const cartTotal = cart.reduce((c, i) => c + (i.basePrice + i.extrasPrice) * i.qty, 0);
+  const deliveryFee = rest?.deliveryFee || 0;
+  const finalTotal = orderType === 'DELIVERY' ? cartTotal + deliveryFee : cartTotal;
 
   if (!rest) return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--theme-bg,#F7F7F7)]">
@@ -534,8 +576,8 @@ export default function RestaurantPage() {
       </div>
 
       {/* INFO BAR */}
-      <div className="bg-[var(--theme-card,#fff)] border-b border-[var(--theme-border,#F0F0F0)] px-4 sm:px-6 py-3">
-        <div className="max-w-[1200px] mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] font-semibold text-[var(--theme-text-mute,#555)]">
+      <div className="bg-[var(--theme-card,#fff)] border-b border-[var(--theme-border,#F0F0F0)]">
+        <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] font-semibold text-[var(--theme-text-mute,#555)]">
           <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-[#009DE0]" />{rest.time}</span>
           <span className="text-[#DDD]">·</span>
           <span>😊 <span className="text-[#009DE0]">{rest.rating}</span></span>
@@ -562,7 +604,7 @@ export default function RestaurantPage() {
             />
           </div>
         </div>
-        <div className="max-w-[1200px] mx-auto px-4 flex overflow-x-auto gap-2 py-3" style={{ scrollbarWidth:"none" }}>
+        <div className="max-w-[1200px] mx-auto px-4 flex flex-nowrap overflow-x-auto gap-2 py-3" style={{ scrollbarWidth:"none" }}>
           {filteredMenu.map((cat, i) => (
             <button key={cat.id} onClick={() => { setActiveTab(i); sectionRefs.current[i]?.scrollIntoView({ behavior:"smooth", block:"start" }); }}
               className="shrink-0 px-4 py-2 rounded-xl text-[13px] font-bold border-none cursor-pointer transition-all whitespace-nowrap"
@@ -684,8 +726,18 @@ export default function RestaurantPage() {
                   <button onClick={() => setPaymentMethod('CASH')} className={`flex-1 py-2 rounded-lg transition-colors ${paymentMethod === 'CASH' ? 'bg-[var(--theme-card,#fff)] shadow-sm text-[#10B981]' : 'text-[var(--theme-text-sec,#888)] hover:text-[var(--theme-text-mute,#555)]'}`}>💵 Efectivo</button>
                   <button onClick={() => setPaymentMethod('DATAPHONE')} className={`flex-1 py-2 rounded-lg transition-colors ${paymentMethod === 'DATAPHONE' ? 'bg-[var(--theme-card,#fff)] shadow-sm text-[#10B981]' : 'text-[var(--theme-text-sec,#888)] hover:text-[var(--theme-text-mute,#555)]'}`}>💳 Datáfono/Tarjeta</button>
                 </div>
-                <div className="flex justify-between mb-3 text-[14px] font-bold text-[var(--theme-text,#1B1B1B)]">
-                  <span>Total</span><span>€{cartTotal.toFixed(2)}</span>
+                <div className="space-y-2 mb-3">
+                  <div className="flex justify-between text-[12px] text-[var(--theme-text-sec,#888)] font-medium">
+                    <span>Subtotal</span><span>€{cartTotal.toFixed(2)}</span>
+                  </div>
+                  {orderType === 'DELIVERY' && deliveryFee > 0 && (
+                    <div className="flex justify-between text-[12px] text-[var(--theme-text-sec,#888)] font-medium">
+                      <span>Gastos de envío</span><span>€{deliveryFee.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-2 border-t border-[#F5F5F5] text-[14px] font-bold text-[var(--theme-text,#1B1B1B)]">
+                    <span>Total</span><span>€{finalTotal.toFixed(2)}</span>
+                  </div>
                 </div>
                 <button onClick={handleOrder}
                   className="w-full text-white font-bold text-[14px] py-3.5 rounded-2xl border-none cursor-pointer transition-all hover:-translate-y-[1px] hover:shadow-[0_4px_16px_rgba(255,107,53,0.35)]"
@@ -706,13 +758,13 @@ export default function RestaurantPage() {
             style={{ background:"var(--theme-primary-grad, linear-gradient(135deg,#FF6B35,#FF8C55))" }}>
             <span className="bg-[var(--theme-card,#fff)]/25 w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-black">{cartCount}</span>
             <span>Ver pedido</span>
-            <span>€{cartTotal.toFixed(2)}</span>
+            <span>€{finalTotal.toFixed(2)}</span>
           </button>
         </div>
       )}
 
       {modal && <CustomModal product={modal} restId={id} restName={rest.name} onClose={() => setModal(null)} onAdd={addToCart} />}
-      {drawer && <CartDrawer cart={cart} restName={rest.name} onClose={() => setDrawer(false)} onQty={changeQty} onOrder={handleOrder} orderType={orderType} setOrderType={setOrderType} paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} />}
+      {drawer && <CartDrawer cart={cart} restName={rest.name} onClose={() => setDrawer(false)} onQty={changeQty} onOrder={handleOrder} orderType={orderType} setOrderType={setOrderType} paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} deliveryFee={deliveryFee} />}
 
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');

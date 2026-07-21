@@ -1,263 +1,396 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
-import { Store, CheckCircle, Clock, Package, AlertCircle } from "lucide-react";
+import toast from 'react-hot-toast';
+import { Clock, MapPin, Search } from "lucide-react";
+import { onAuthStateChanged } from "firebase/auth";
 
-type Client = {
-  id: string;
-  name: string;
-  email: string;
-  phone: string | null;
-};
-
-type OrderItem = {
-  id: string;
-  quantity: number;
-  product: { name: string; price: number };
-  options: string | null;
-};
-
-type Order = {
-  id: string;
-  totalAmount: number;
-  status: "PENDING" | "PREPARING" | "ON_THE_WAY" | "DELIVERED" | "CANCELLED";
-  paymentMethod: "CASH" | "DATAPHONE";
-  deliveryAddress: string;
-  orderType: "DELIVERY" | "PICKUP";
-  createdAt: string;
-  items: OrderItem[];
-  client: Client;
-};
-
-type RestaurantData = {
-  id: string;
-  name: string;
-  status: "PENDING" | "APPROVED" | "REJECTED";
-  orders: Order[];
-};
-
-export default function ProfessionalDashboard() {
-  const [restaurant, setRestaurant] = useState<RestaurantData | null>(null);
-  const [loading, setLoading] = useState(true);
+export default function KitchenDashboard() {
+  const [orders, setOrders] = useState<any[]>([]);
+  const [restaurant, setRestaurant] = useState<any>(null);
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const router = useRouter();
 
-  const fetchDashboard = async () => {
+  const fetchOrders = useCallback(async () => {
     try {
       const user = auth.currentUser;
-      if (!user) {
-        router.push("/login");
-        return;
-      }
+      if (!user) return;
       const token = await user.getIdToken();
-      const res = await fetch("http://localhost:4000/api/dashboard/my-restaurant", {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setRestaurant(await res.json());
-      } else if (res.status === 403) {
-        alert("Acceso Denegado: No tienes permisos de administrador.");
-        router.push("/");
-        return;
+      const headers = { "Authorization": `Bearer ${token}` };
+
+      const [resStats, resOrders] = await Promise.all([
+        fetch("http://localhost:4000/api/restaurant-admin/stats", { headers }),
+        fetch("http://localhost:4000/api/restaurant-admin/orders", { headers })
+      ]);
+      
+      if (resStats.ok) {
+        const data = await resStats.json();
+        setRestaurant(data.restaurant);
       }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
+
+      if (resOrders.ok) {
+        const fetchedOrders = await resOrders.json();
+        const mappedOrders = fetchedOrders.map((o: any) => {
+          if (o.items) {
+            o.items = o.items.map((it: any) => {
+               if (it.options) {
+                  try {
+                    let sections: any[] = [];
+                    if (it.product?.sectionsData) {
+                       sections = JSON.parse(it.product.sectionsData);
+                    } else if (it.product) {
+                       const categoriesWithGlobalExtras = ["Hamburguesas", "Kebabs", "Bocadillos", "Camperos", "Pitas y Media Luna", "Shawarmas", "Tacos", "Chawarmas", "Menús"];
+                       if (categoriesWithGlobalExtras.includes(it.product.category || "")) {
+                         sections = [
+                           { id: "veg", title: "Elige tus vegetales:", options: [{id:"lechuga",label:"Lechuga"},{id:"tomate",label:"Tomate"},{id:"cebolla",label:"Cebolla"},{id:"maiz",label:"Maíz"},{id:"zanahoria",label:"Zanahoria"}] },
+                           { id: "sauces", title: "¿Qué salsas quieres?:", max: 2, options: [{id:"blanca",label:"Salsa Blanca"},{id:"picante",label:"Salsa Picante"},{id:"ketchup",label:"Kétchup"},{id:"mayonesa",label:"Mayonesa"},{id:"barbacoa",label:"Barbacoa"},{id:"yogur",label:"Yogur"},{id:"mostaza",label:"Mostaza"},{id:"alioili",label:"Alioli"}] }
+                         ];
+                       }
+                    }
+                    
+                    let optsIds = JSON.parse(it.options);
+                    if (!Array.isArray(optsIds) && typeof optsIds === 'object') {
+                       optsIds = Object.values(optsIds).flat();
+                    }
+                    if (Array.isArray(optsIds)) {
+                       it.extras = optsIds.map((id: any) => {
+                          for (const s of sections) {
+                             const opt = (s.options || []).find((x: any) => x.id === id);
+                             if (opt) return { name: opt.label, qty: 1, section: s.title };
+                          }
+                          // Fallback si no lo encuentra en las hardcoded
+                          return { name: id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' '), qty: 1, section: "Añadir Extras" };
+                       }).filter(Boolean);
+                    }
+                  } catch (e) {}
+               }
+               return it;
+            });
+          }
+          return o;
+        });
+        setOrders(mappedOrders);
+      }
+    } catch (e) {
+      console.error(e);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (user) {
-        fetchDashboard();
-        const interval = setInterval(fetchDashboard, 5000);
-        return () => clearInterval(interval);
-      } else {
-        router.push("/login");
-      }
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user) { router.push("/login"); return; }
+      setIsAuthorized(true);
+      fetchOrders();
+      const interval = setInterval(fetchOrders, 10000); // Polling cada 10s
+      return () => clearInterval(interval);
     });
-    return () => unsubscribe();
-  }, [router]);
+    return () => unsub();
+  }, [router, fetchOrders]);
 
-  const updateOrderStatus = async (orderId: string, status: string) => {
+  const handleUpdateOrderStatus = async (id: string, status: string) => {
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
     try {
       const token = await auth.currentUser?.getIdToken();
-      const res = await fetch(`http://localhost:4000/api/orders/${orderId}/status`, {
+      await fetch(`http://localhost:4000/api/orders/${id}/status`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ status })
       });
-      if (res.ok) fetchDashboard();
-    } catch (error) {
-      alert("Error actualizando pedido");
+      fetchOrders();
+    } catch (e) {
+      toast.error("Error actualizando pedido");
     }
   };
 
-  if (loading) return <div className="min-h-screen bg-gray-900 flex justify-center items-center text-white">Cargando Sistema...</div>;
-
-  if (!restaurant) return (
-    <div className="min-h-screen bg-gray-900 flex justify-center items-center text-white">
-      <h2>No tienes ningún restaurante registrado.</h2>
-    </div>
-  );
-
-  if (restaurant.status === "PENDING") {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-gray-800 p-8 rounded-2xl shadow-xl text-center max-w-md border border-gray-700">
-          <div className="text-yellow-500 mb-4 flex justify-center"><AlertCircle className="w-12 h-12" /></div>
-          <h2 className="text-2xl font-bold text-white mb-2">Restaurante en Revisión</h2>
-          <p className="text-gray-400">Tu local está siendo revisado. Vuelve más tarde.</p>
-        </div>
-      </div>
-    );
-  }
-
-  const activeOrders = restaurant.orders.filter(o => o.status === 'PENDING' || o.status === 'PREPARING' || o.status === 'ON_THE_WAY');
-  const pastOrders = restaurant.orders.filter(o => o.status === 'DELIVERED' || o.status === 'CANCELLED');
-
-  const parseOptions = (optionsStr: string | null) => {
-    if (!optionsStr) return null;
-    try { return JSON.parse(optionsStr); } catch { return null; }
+  const formatOrderTime = (createdAt: string) => {
+    if (!createdAt) return "--:--";
+    const date = new Date(createdAt);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const ALL_INGREDIENTS = ['lechuga', 'tomate', 'cebolla', 'lombarda'];
+  const getDelayInfo = (createdAt: string, _bufferTime?: number) => {
+    if (!createdAt) return { text: "Calculando...", isDelayed: false, creationTime: "--:--" };
+    const orderTime = new Date(createdAt).getTime();
+    const now = Date.now();
+    const elapsedMinutes = Math.floor((now - orderTime) / 60000);
+    const creationTime = new Date(orderTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    return { 
+      text: `Lleva: ${elapsedMinutes} min`, 
+      isDelayed: elapsedMinutes >= 60,
+      creationTime
+    };
+  };
+
+  if (!isAuthorized) return null;
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-slate-300 font-sans p-6 overflow-hidden flex flex-col">
-
-      {/* HEADER */}
-      <header className="flex justify-between items-center mb-8 bg-[#1e293b] p-4 rounded-2xl border border-slate-700">
-        <div className="flex items-center gap-4">
-          <div className="bg-orange-500 p-3 rounded-xl text-white">
-            <Store className="w-6 h-6" />
-          </div>
+    <div className="min-h-screen bg-[#F5F7FA] p-6 font-sans overflow-hidden">
+      <div className="max-w-[1600px] mx-auto flex flex-col h-[calc(100vh-48px)]">
+        <div className="flex items-center justify-between mb-6 shrink-0">
           <div>
-            <h1 className="text-xl font-bold text-white uppercase tracking-wider">{restaurant.name}</h1>
-            <p className="text-slate-400 text-sm flex items-center gap-2">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> Sistema de Comandas Activo
-            </p>
+            <h1 className="text-[24px] font-black text-[#1A202C]">Tastio Admin / Pedidos</h1>
+            <p className="text-[14px] text-[#718096]">Pedidos (Vista Cocina)</p>
           </div>
+          <span className="text-[14px] font-bold text-[#A0AEC0]">{orders.length} en total</span>
         </div>
-        <div className="flex gap-4">
-          <div className="bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-700 text-center">
-            <p className="text-xs text-slate-500 uppercase font-bold">Pedidos Hoy</p>
-            <p className="text-xl font-black text-white">{restaurant.orders.length}</p>
-          </div>
-          <div className="bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-700 text-center">
-            <p className="text-xs text-slate-500 uppercase font-bold">Ingresos</p>
-            <p className="text-xl font-black text-green-400">
-              {restaurant.orders.filter(o => o.status === 'DELIVERED').reduce((acc, o) => acc + o.totalAmount, 0).toFixed(2)} €
-            </p>
-          </div>
-        </div>
-      </header>
 
-      {/* DASHBOARD GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 h-full">
-
-        {/* ENTRANTES */}
-        <div className="bg-[#1e293b] rounded-2xl border border-slate-700 flex flex-col h-[75vh]">
-          <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-[#0f172a]/50 rounded-t-2xl">
-            <h2 className="font-bold text-white flex items-center gap-2"><Clock className="text-orange-500" /> Entrantes &amp; Cocina</h2>
-            <span className="bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full">{activeOrders.length}</span>
-          </div>
-          <div className="p-4 overflow-y-auto flex-1 space-y-4">
-            {activeOrders.map(order => (
-              <div key={order.id} className="border-l-4 p-4 rounded-r-xl bg-[#0f172a] shadow-lg border-orange-500">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <span className="text-xs text-slate-500">#{order.id.slice(0, 8)}</span>
-                    {/* Nombre y teléfono del cliente */}
-                    <h3 className="font-bold text-white">{order.client?.name ?? order.deliveryAddress}</h3>
-                    {order.client?.phone && (
-                      <a href={`tel:${order.client.phone}`} className="text-xs text-blue-400 hover:text-blue-300">
-                        📞 {order.client.phone}
-                      </a>
-                    )}
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      📍 {order.orderType === 'PICKUP' ? 'Recogida en local' : order.deliveryAddress}
-                    </p>
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded mt-1 inline-block ${order.paymentMethod === 'DATAPHONE' ? 'bg-purple-500/20 text-purple-400' : 'bg-green-500/20 text-green-400'}`}>
-                      {order.paymentMethod === 'DATAPHONE' ? '💳 Traer Datáfono' : '💵 Efectivo'}
+        <div className="flex gap-4 overflow-x-auto pb-4 h-full">
+          {/* Columna Pendientes */}
+          <div className="bg-[#F8F9FA] rounded-3xl p-4 min-w-[350px] flex-1 border border-[#F0F2F5] flex flex-col h-full overflow-hidden">
+            <h3 className="font-bold text-[#1A202C] mb-4 flex items-center gap-2 shrink-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span> Pendientes ({orders.filter(o=>o.status==='PENDING').length})
+            </h3>
+            <div className="space-y-4 overflow-y-auto flex-1 pr-2" style={{ scrollbarWidth: 'thin' }}>
+              {orders.filter(o=>o.status==='PENDING').map(o => {
+                const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
+                return (
+                <div key={o.id} className={`bg-white p-5 rounded-[20px] shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'} hover:shadow-md transition-shadow relative overflow-hidden`}>
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex flex-col">
+                      <span className="font-mono text-[14px] font-black text-[#1A202C]">#{o.id.substring(0,8).toUpperCase()}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md mt-1 w-fit ${o.orderType === 'TPV' ? 'bg-indigo-100 text-indigo-700' : 'bg-[#FFF3EE] text-[#FF6B35]'}`}>
+                        {o.orderType === 'TPV' ? 'TPV (Tienda)' : 'Móvil / Web'}
+                      </span>
+                      <span className="text-[11px] font-bold text-[#A0AEC0] mt-1">{formatOrderTime(o.createdAt)}</span>
+                    </div>
+                    <span className="text-[15px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2.5 py-1 rounded-xl flex items-center gap-1">
+                      €{o.totalAmount?.toFixed(2)}
+                      {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#FF6B35]/80">+ Envío</span>}
                     </span>
                   </div>
-                  <div className="text-right">
-                    <div className="text-xl font-black text-white">{order.totalAmount.toFixed(2)}€</div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      Pedido: {new Date(order.createdAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                  
+                  <div className="bg-[#F8F9FA] rounded-xl p-3 mb-4 border border-[#F0F2F5]">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-8 h-8 rounded-full bg-[#E2E8F0] flex items-center justify-center shrink-0">
+                        <span className="text-[12px] font-extrabold text-[#4A5568]">{o.client?.name ? o.client.name.substring(0,2).toUpperCase() : 'CL'}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-extrabold text-[#1A202C] truncate">{o.client?.name || o.client?.email || "Cliente Invitado"}</p>
+                        <p className="text-[11px] font-semibold text-[#718096] truncate">{o.client?.phone || 'Sin teléfono'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-1.5 text-[11px] font-bold text-[#4A5568] bg-white p-2 rounded-lg border border-[#F0F2F5]">
+                      <MapPin className="w-3.5 h-3.5 text-[#FF6B35] shrink-0 mt-0.5" />
+                      <span className="line-clamp-2 leading-snug">{o.deliveryAddress || o.client?.address || "Recogida en local"}</span>
                     </div>
                   </div>
-                </div>
 
-                {/* Items */}
-                <div className="space-y-2 mb-4 bg-[#1e293b] p-3 rounded-lg border border-slate-700">
-                  {order.items.map(item => {
-                    const opts = parseOptions(item.options);
-                    return (
-                      <div key={item.id} className="text-sm border-b border-slate-700/50 pb-2 last:border-0 last:pb-0">
-                        <div className="font-bold text-slate-200">{item.quantity}x {item.product.name}</div>
-                        {opts && (
-                          <div className="pl-4 mt-1 space-y-0.5">
-                            {opts.ingredients && opts.ingredients.length > 0 && (
-                              <p className="text-xs text-green-400"><span className="font-bold">Con:</span> {opts.ingredients.join(', ')}</p>
-                            )}
-                            {opts.ingredients && (
-                              <p className="text-xs text-red-400"><span className="font-bold">Sin:</span> {ALL_INGREDIENTS.filter(i => !opts.ingredients.includes(i)).join(', ') || 'Nada'}</p>
-                            )}
-                            {opts.sauces && opts.sauces.length > 0 && (
-                              <p className="text-xs text-blue-400"><span className="font-bold">Salsas:</span> {opts.sauces.join(', ')}</p>
-                            )}
-                            {opts.extras && opts.extras.length > 0 && (
-                              <p className="text-xs text-orange-400 font-bold">Extras: {opts.extras.join(', ')}</p>
-                            )}
+                  <div className="space-y-2 mb-4 bg-[#F8F9FA] rounded-xl p-3 border border-[#F0F2F5]">
+                    {o.items?.map((item: any, i: number) => (
+                      <div key={i} className="flex flex-col border-b border-[#E2E8F0] pb-2 mb-2 last:mb-0 last:pb-0 last:border-0">
+                        <div className="flex items-start gap-2">
+                          <span className="text-[14px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2 py-0.5 rounded-lg">{item.qty}x</span>
+                          <span className="text-[14px] font-extrabold text-[#1A202C] leading-tight pt-1">{item.product?.name || "Producto"}</span>
+                        </div>
+                        {item.extras && item.extras.length > 0 && (
+                          <div className="mt-2 pl-9 space-y-2">
+                            {Array.from(new Set(item.extras.map((ex: any) => ex.section))).map((secName: any, idx: number) => (
+                              <div key={idx}>
+                                <div className="text-[10px] font-black uppercase text-[#A0AEC0] tracking-wider mb-0.5">{secName}:</div>
+                                {item.extras.filter((ex: any) => ex.section === secName).map((ex: any, j: number) => (
+                                  <div key={j} className="flex items-center gap-1.5 text-[12px] font-bold text-[#4A5568]">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B35]"></div>
+                                    <span className="leading-tight">{ex.name} {ex.qty > 1 ? `(x${ex.qty})` : ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center mb-4 pt-3 border-t border-[#F0F2F5]">
+                     <span className="text-[12px] font-bold text-[#718096]">
+                       Hora de realizado: {timeInfo.creationTime}
+                     </span>
+                     <span className={`text-[12px] font-black flex items-center gap-1.5 ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>
+                       <Clock className="w-4 h-4" /> {timeInfo.text}
+                     </span>
+                  </div>
+
+                  <button onClick={() => handleUpdateOrderStatus(o.id, 'PREPARING')} className="w-full bg-[#FF6B35] text-white text-[14px] font-black py-3 rounded-xl hover:bg-[#e55a25] transition-colors shadow-[0_4px_12px_rgba(255,107,53,0.2)] active:scale-[0.98]">
+                    Empezar a preparar
+                  </button>
                 </div>
-
-                <button
-                  onClick={() => updateOrderStatus(order.id, 'DELIVERED')}
-                  className="w-full py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-2"
-                >
-                  <CheckCircle className="w-4 h-4" /> Pedido Terminado
-                </button>
-              </div>
-            ))}
-            {activeOrders.length === 0 && <p className="text-center text-slate-500 mt-10">Sin pedidos entrantes</p>}
+              )})}
+            </div>
           </div>
-        </div>
 
-        {/* HISTORIAL RECIENTE */}
-        <div className="bg-[#1e293b] rounded-2xl border border-slate-700 flex flex-col h-[75vh]">
-          <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-[#0f172a]/50 rounded-t-2xl">
-            <h2 className="font-bold text-white flex items-center gap-2"><Package className="text-green-500" /> Completados</h2>
-            <span className="bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full">{pastOrders.length}</span>
-          </div>
-          <div className="p-4 overflow-y-auto flex-1 space-y-3">
-            {pastOrders.map(order => (
-              <div key={order.id} className="p-3 rounded-xl bg-[#0f172a] border border-slate-700/50 flex justify-between items-center">
-                <div>
-                  <h3 className="font-bold text-slate-300 text-sm">{order.client?.name ?? order.deliveryAddress}</h3>
-                  <p className="text-xs text-slate-500 line-clamp-1">{order.deliveryAddress}</p>
-                  <span className={`text-xs font-bold ${order.status === 'DELIVERED' ? 'text-green-500' : 'text-red-500'}`}>
-                    {order.status === 'DELIVERED' ? 'Completado' : 'Cancelado'}
-                  </span>
+          {/* Columna Preparando */}
+          <div className="bg-[#F8F9FA] rounded-3xl p-4 min-w-[350px] flex-1 border border-[#F0F2F5] flex flex-col h-full overflow-hidden">
+            <h3 className="font-bold text-[#1A202C] mb-4 flex items-center gap-2 shrink-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-400"></span> Preparando ({orders.filter(o=>o.status==='PREPARING').length})
+            </h3>
+            <div className="space-y-4 overflow-y-auto flex-1 pr-2" style={{ scrollbarWidth: 'thin' }}>
+              {orders.filter(o=>o.status==='PREPARING').map(o => {
+                const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
+                return (
+                <div key={o.id} className={`bg-white p-5 rounded-[20px] shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'} hover:shadow-md transition-shadow relative overflow-hidden`}>
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex flex-col">
+                      <span className="font-mono text-[14px] font-black text-[#1A202C]">#{o.id.substring(0,8).toUpperCase()}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md mt-1 w-fit ${o.orderType === 'TPV' ? 'bg-indigo-100 text-indigo-700' : 'bg-[#FFF3EE] text-[#FF6B35]'}`}>
+                        {o.orderType === 'TPV' ? 'TPV (Tienda)' : 'Móvil / Web'}
+                      </span>
+                      <span className="text-[11px] font-bold text-[#A0AEC0] mt-1">{formatOrderTime(o.createdAt)}</span>
+                    </div>
+                    <span className="text-[15px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2.5 py-1 rounded-xl flex items-center gap-1">
+                      €{o.totalAmount?.toFixed(2)}
+                      {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#FF6B35]/80">+ Envío</span>}
+                    </span>
+                  </div>
+                  
+                  <div className="bg-[#F8F9FA] rounded-xl p-3 mb-4 border border-[#F0F2F5]">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-8 h-8 rounded-full bg-[#E2E8F0] flex items-center justify-center shrink-0">
+                        <span className="text-[12px] font-extrabold text-[#4A5568]">{o.client?.name ? o.client.name.substring(0,2).toUpperCase() : 'CL'}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-extrabold text-[#1A202C] truncate">{o.client?.name || o.client?.email || "Cliente Invitado"}</p>
+                        <p className="text-[11px] font-semibold text-[#718096] truncate">{o.client?.phone || 'Sin teléfono'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-1.5 text-[11px] font-bold text-[#4A5568] bg-white p-2 rounded-lg border border-[#F0F2F5]">
+                      <MapPin className="w-3.5 h-3.5 text-[#3182CE] shrink-0 mt-0.5" />
+                      <span className="line-clamp-2 leading-snug">{o.deliveryAddress || o.client?.address || "Recogida en local"}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 mb-4 bg-[#F8F9FA] rounded-xl p-3 border border-[#F0F2F5]">
+                    {o.items?.map((item: any, i: number) => (
+                      <div key={i} className="flex flex-col border-b border-[#E2E8F0] pb-2 mb-2 last:mb-0 last:pb-0 last:border-0">
+                        <div className="flex items-start gap-2">
+                          <span className="text-[14px] font-black text-[#3182CE] bg-[#EBF8FF] px-2 py-0.5 rounded-lg">{item.qty}x</span>
+                          <span className="text-[14px] font-extrabold text-[#1A202C] leading-tight pt-1">{item.product?.name || "Producto"}</span>
+                        </div>
+                        {item.extras && item.extras.length > 0 && (
+                          <div className="mt-2 pl-9 space-y-2">
+                            {Array.from(new Set(item.extras.map((ex: any) => ex.section))).map((secName: any, idx: number) => (
+                              <div key={idx}>
+                                <div className="text-[10px] font-black uppercase text-[#A0AEC0] tracking-wider mb-0.5">{secName}:</div>
+                                {item.extras.filter((ex: any) => ex.section === secName).map((ex: any, j: number) => (
+                                  <div key={j} className="flex items-center gap-1.5 text-[12px] font-bold text-[#4A5568]">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-[#3182CE]"></div>
+                                    <span className="leading-tight">{ex.name} {ex.qty > 1 ? `(x${ex.qty})` : ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center mb-4 pt-3 border-t border-[#F0F2F5]">
+                     <span className="text-[12px] font-bold text-[#718096]">
+                       Hora de realizado: {timeInfo.creationTime}
+                     </span>
+                     <span className={`text-[12px] font-black flex items-center gap-1.5 ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>
+                       <Clock className="w-4 h-4" /> {timeInfo.text}
+                     </span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button onClick={() => handleUpdateOrderStatus(o.id, 'PENDING')} className="px-4 bg-[#F0F2F5] text-[#718096] text-[14px] font-black py-3 rounded-xl hover:bg-[#E2E8F0] transition-colors active:scale-[0.98]">Atrás</button>
+                    <button onClick={() => handleUpdateOrderStatus(o.id, 'ON_THE_WAY')} className="flex-1 bg-blue-100 text-blue-700 text-[14px] font-black py-3 rounded-xl hover:bg-blue-200 transition-colors active:scale-[0.98]">Listo / En Camino</button>
+                  </div>
                 </div>
-                <div className="font-bold text-slate-400 text-sm">{order.totalAmount.toFixed(2)}€</div>
-              </div>
-            ))}
-            {pastOrders.length === 0 && <p className="text-center text-slate-500 mt-10">Historial vacío</p>}
+              )})}
+            </div>
           </div>
-        </div>
 
+          {/* Columna Listos / Entregados */}
+          <div className="bg-[#F8F9FA] rounded-3xl p-4 min-w-[350px] flex-1 border border-[#F0F2F5] flex flex-col h-full overflow-hidden">
+            <h3 className="font-bold text-[#1A202C] mb-4 flex items-center gap-2 shrink-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-green-400"></span> Enviados / Listos ({orders.filter(o=>['ON_THE_WAY', 'DELIVERED'].includes(o.status)).length})
+            </h3>
+            <div className="space-y-4 overflow-y-auto flex-1 pr-2 opacity-80 hover:opacity-100 transition-opacity" style={{ scrollbarWidth: 'thin' }}>
+              {orders.filter(o=>['ON_THE_WAY', 'DELIVERED'].includes(o.status)).map(o => {
+                const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
+                return (
+                <div key={o.id} className={`bg-white p-5 rounded-[20px] shadow-sm border ${o.status === 'DELIVERED' ? 'opacity-60 grayscale' : 'border-[#E2E8F0]'} hover:shadow-md transition-shadow relative overflow-hidden`}>
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex flex-col">
+                      <span className="font-mono text-[14px] font-black text-[#1A202C]">#{o.id.substring(0,8).toUpperCase()}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md mt-1 w-fit ${o.orderType === 'TPV' ? 'bg-indigo-100 text-indigo-700' : 'bg-[#FFF3EE] text-[#FF6B35]'}`}>
+                        {o.orderType === 'TPV' ? 'TPV (Tienda)' : 'Móvil / Web'}
+                      </span>
+                      <span className="text-[11px] font-bold text-[#A0AEC0] mt-1">{formatOrderTime(o.createdAt)}</span>
+                    </div>
+                    <span className="text-[15px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2.5 py-1 rounded-xl flex items-center gap-1">
+                      €{o.totalAmount?.toFixed(2)}
+                      {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#FF6B35]/80">+ Envío</span>}
+                    </span>
+                  </div>
+                  
+                  <div className="bg-[#F8F9FA] rounded-xl p-3 mb-4 border border-[#F0F2F5]">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-8 h-8 rounded-full bg-[#E2E8F0] flex items-center justify-center shrink-0">
+                        <span className="text-[12px] font-extrabold text-[#4A5568]">{o.client?.name ? o.client.name.substring(0,2).toUpperCase() : 'CL'}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-extrabold text-[#1A202C] truncate">{o.client?.name || o.client?.email || "Cliente Invitado"}</p>
+                        <p className="text-[11px] font-semibold text-[#718096] truncate">{o.client?.phone || 'Sin teléfono'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-1.5 text-[11px] font-bold text-[#4A5568] bg-white p-2 rounded-lg border border-[#F0F2F5]">
+                      <MapPin className="w-3.5 h-3.5 text-[#38A169] shrink-0 mt-0.5" />
+                      <span className="line-clamp-2 leading-snug">{o.deliveryAddress || o.client?.address || "Recogida en local"}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 mb-4 bg-[#F8F9FA] rounded-xl p-3 border border-[#F0F2F5]">
+                    {o.items?.map((item: any, i: number) => (
+                      <div key={i} className="flex flex-col border-b border-[#E2E8F0] pb-2 mb-2 last:mb-0 last:pb-0 last:border-0">
+                        <div className="flex items-start gap-2">
+                          <span className="text-[14px] font-black text-[#38A169] bg-[#F0FFF4] px-2 py-0.5 rounded-lg">{item.qty}x</span>
+                          <span className="text-[14px] font-extrabold text-[#1A202C] leading-tight pt-1">{item.product?.name || "Producto"}</span>
+                        </div>
+                        {item.extras && item.extras.length > 0 && (
+                          <div className="mt-2 pl-9 space-y-2">
+                            {Array.from(new Set(item.extras.map((ex: any) => ex.section))).map((secName: any, idx: number) => (
+                              <div key={idx}>
+                                <div className="text-[10px] font-black uppercase text-[#A0AEC0] tracking-wider mb-0.5">{secName}:</div>
+                                {item.extras.filter((ex: any) => ex.section === secName).map((ex: any, j: number) => (
+                                  <div key={j} className="flex items-center gap-1.5 text-[12px] font-bold text-[#4A5568]">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-[#38A169]"></div>
+                                    <span className="leading-tight">{ex.name} {ex.qty > 1 ? `(x${ex.qty})` : ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center mb-4 pt-3 border-t border-[#F0F2F5]">
+                     <span className="text-[12px] font-bold text-[#718096]">
+                       Hora de realizado: {timeInfo.creationTime}
+                     </span>
+                     <span className={`text-[12px] font-black flex items-center gap-1.5 ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>
+                       <Clock className="w-4 h-4" /> {timeInfo.text}
+                     </span>
+                  </div>
+
+                  {o.status === 'ON_THE_WAY' && (
+                    <button onClick={() => handleUpdateOrderStatus(o.id, 'DELIVERED')} className="w-full bg-[#D1FAE5] text-[#047857] text-[14px] font-black py-3 rounded-xl hover:bg-[#A7F3D0] transition-colors active:scale-[0.98]">
+                      Marcar Entregado
+                    </button>
+                  )}
+                </div>
+              )})}
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
   );

@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
-import { Plus, Minus, Search, Printer, Banknote, CreditCard, Trash2, Package, History } from "lucide-react";
+import { ArrowLeft, Plus, Minus, Search, Printer, Banknote, CreditCard, Trash2, Package, History, Check } from "lucide-react";
 import { auth } from "@/lib/firebase";
+import ConfirmModal from "./ConfirmModal";
 
-export default function AdminTPV({ restaurant, products }: { restaurant: any, products: any[] }) {
+export default function AdminTPV({ restaurant, products, onClose }: { restaurant: any, products: any[], onClose?: () => void }) {
   const [ticket, setTicket] = useState<any[]>([]);
   const [activeCat, setActiveCat] = useState<string>("Todos");
   
@@ -12,6 +13,11 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [orderHistory, setOrderHistory] = useState<any[]>([]);
+
+  // Confirm Modal State
+  const [confirmState, setConfirmState] = useState<{isOpen: boolean, title: string, message: string, isDanger: boolean, onConfirm: () => void}>({
+    isOpen: false, title: "", message: "", isDanger: true, onConfirm: () => {}
+  });
 
   const fetchHistory = async () => {
     try {
@@ -37,14 +43,40 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
   const categories = useMemo(() => {
     const cats = new Set<string>();
     products.forEach(p => {
-      if (p.category) cats.add(p.category);
+      if (p.category && p.category !== "Extras") cats.add(p.category);
     });
-    return ["Todos", ...Array.from(cats)];
+    const catArr = Array.from(cats);
+    const categoryOrder = ["Hamburguesas", "Kebabs", "Menús", "Camperos", "Pizzas", "Bandejas", "Shawarmas", "Chawarmas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas"];
+    catArr.sort((a, b) => {
+      const iA = categoryOrder.indexOf(a);
+      const iB = categoryOrder.indexOf(b);
+      if (iA === -1 && iB === -1) return a.localeCompare(b);
+      if (iA === -1) return 1;
+      if (iB === -1) return -1;
+      return iA - iB;
+    });
+    return ["Todos", ...catArr];
   }, [products]);
 
-  const filteredProducts = activeCat === "Todos" 
-    ? products 
-    : products.filter(p => p.category === activeCat);
+  const categoryOrder = ["Hamburguesas", "Kebabs", "Menús", "Camperos", "Pizzas", "Bandejas", "Shawarmas", "Chawarmas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas"];
+
+  const filteredProducts = useMemo(() => {
+    let list = activeCat === "Todos" 
+      ? products.filter(p => p.category !== "Extras" && !(p.name || "").toLowerCase().startsWith("extra"))
+      : products.filter(p => p.category === activeCat);
+      
+    if (activeCat === "Todos") {
+      list = [...list].sort((a, b) => {
+        const iA = categoryOrder.indexOf(a.category || "");
+        const iB = categoryOrder.indexOf(b.category || "");
+        if (iA === -1 && iB === -1) return (a.category || "").localeCompare(b.category || "");
+        if (iA === -1) return 1;
+        if (iB === -1) return -1;
+        return iA - iB;
+      });
+    }
+    return list;
+  }, [activeCat, products]);
 
   const extrasProducts = useMemo(() => {
     return products.filter(p => p.category?.toLowerCase().includes("extra"));
@@ -61,13 +93,22 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
   const cashAmount = parseFloat(cashGiven) || 0;
   const change = cashAmount - total;
 
+  const categoriesWithGlobalExtras = ["Hamburguesas", "Kebabs", "Bocadillos", "Camperos", "Pitas y Media Luna", "Shawarmas", "Tacos", "Chawarmas", "Menús"];
+  
   const quickAdd = (product: any) => {
-    // Si es un extra, se añade directamente (o no se permite añadir solo, pero por ahora lo añadimos)
-    if (product.category?.toLowerCase().includes("extra") || extrasProducts.length === 0) {
+    if (product.category?.toLowerCase().includes("extra")) {
       addDirectlyToTicket(product, []);
-    } else {
+      return;
+    }
+    
+    const hasSections = !!product.sectionsData;
+    const isFood = categoriesWithGlobalExtras.includes(product.category || "");
+    
+    if (hasSections || isFood) {
       setSelectedProductForModal(product);
       setSelectedExtras([]);
+    } else {
+      addDirectlyToTicket(product, []);
     }
   };
 
@@ -106,10 +147,16 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
   };
 
   const clearTicket = () => {
-    if (confirm("¿Estás seguro de cancelar este ticket?")) {
-      setTicket([]);
-      setCashGiven("");
-    }
+    setConfirmState({
+      isOpen: true,
+      title: "Cancelar Ticket",
+      message: "¿Estás seguro de cancelar este ticket?",
+      isDanger: true,
+      onConfirm: () => {
+        setTicket([]);
+        setCashGiven("");
+      }
+    });
   };
 
   const handlePrint = async () => {
@@ -148,19 +195,25 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
   };
 
   const markAsReturned = async (orderId: string) => {
-    if (confirm("¿Estás seguro de marcar este pedido como devuelto? (No se puede deshacer)")) {
-      try {
-        const user = auth.currentUser;
-        if (!user) return;
-        const token = await user.getIdToken();
-        const res = await fetch(`http://localhost:4000/api/orders/${orderId}/status`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ status: "RETURNED" })
-        });
-        if (res.ok) fetchHistory();
-      } catch (e) {}
-    }
+    setConfirmState({
+      isOpen: true,
+      title: "Devolver Pedido",
+      message: "¿Estás seguro de marcar este pedido como devuelto? (No se puede deshacer)",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          const user = auth.currentUser;
+          if (!user) return;
+          const token = await user.getIdToken();
+          const res = await fetch(`http://localhost:4000/api/orders/${orderId}/status`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ status: "RETURNED" })
+          });
+          if (res.ok) fetchHistory();
+        } catch (e) {}
+      }
+    });
   };
 
   return (
@@ -232,20 +285,33 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
       </div>
 
 
-      {/* ── LEFT PANEL: PRODUCTS ── */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden no-print min-w-0">
-        {/* Categories Tabs */}
-        <div className="bg-white border-b border-[#E2E8F0] shrink-0 px-4 sm:px-6 py-4 flex gap-2 overflow-x-auto shadow-sm z-10" style={{ scrollbarWidth: "none" }}>
-          {categories.map((cat) => (
-            <button key={cat} onClick={() => setActiveCat(cat)}
-              className={`px-5 sm:px-6 py-2.5 rounded-full font-bold text-[13px] sm:text-[14px] whitespace-nowrap transition-all ${activeCat === cat ? 'bg-[#1A202C] text-white shadow-md' : 'bg-[#F1F5F9] text-[#64748B] hover:bg-[#E2E8F0] hover:text-[#1A202C]'}`}>
-              {cat}
-            </button>
-          ))}
+      {/* ── LEFT PANEL (PRODUCTS) ── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden no-print min-w-0 bg-[#F8F9FA]">
+        
+        {/* Header Search & Categories */}
+        <div className="bg-white px-4 sm:px-6 py-4 shadow-sm z-10">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              {onClose && (
+                <button onClick={onClose} className="px-4 py-2 flex items-center gap-2 bg-[#F1F5F9] text-[#1A202C] hover:bg-[#E2E8F0] rounded-xl transition-colors font-bold text-[14px] shrink-0">
+                  <ArrowLeft className="w-4 h-4" /> Salir
+                </button>
+              )}
+              <h2 className="text-[20px] sm:text-[24px] font-black text-[#1A202C] tracking-tight">Catálogo</h2>
+            </div>
+          </div>
+          <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            {categories.map((cat) => (
+              <button key={cat} onClick={() => setActiveCat(cat)}
+                className={`px-5 sm:px-6 py-2.5 rounded-full font-bold text-[13px] sm:text-[14px] whitespace-nowrap transition-all ${activeCat === cat ? 'bg-[#1A202C] text-white shadow-md' : 'bg-[#F1F5F9] text-[#64748B] hover:bg-[#E2E8F0] hover:text-[#1A202C]'}`}>
+                {cat}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Products Grid */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#F8F9FA] min-h-0">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 min-h-0">
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-5">
             {filteredProducts.map(product => (
               <div key={product.id} onClick={() => quickAdd(product)}
@@ -391,7 +457,7 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
             
             <div className="bg-gradient-to-r from-[#FF6B35] to-[#FF8C5A] p-6 text-white relative shrink-0">
               <button onClick={() => setSelectedProductForModal(null)} className="absolute top-4 right-4 w-8 h-8 bg-black/20 rounded-full flex items-center justify-center text-white hover:bg-black/40 transition-colors">
-                <Minus className="w-5 h-5 rotate-45" /> {/* Close icon using Minus rotated, wait, let's use the standard SVG path or lucide icon */}
+                <Minus className="w-5 h-5 rotate-45" /> 
               </button>
               <div className="flex items-center gap-4">
                 {selectedProductForModal.imageUrl && (
@@ -404,41 +470,109 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
               </div>
             </div>
 
-            <div className="p-6 flex-1 overflow-y-auto">
-              <h3 className="font-extrabold text-[15px] text-[#1A202C] mb-4 uppercase tracking-wider">Añadir Extras</h3>
-              
-              <div className="space-y-3">
-                {extrasProducts.map(extra => {
-                  const selected = selectedExtras.find(e => e.id === extra.id);
-                  const qty = selected ? selected.qty : 0;
-                  
-                  return (
-                    <div key={extra.id} className="flex items-center justify-between p-3 rounded-2xl border border-[#E2E8F0] bg-white hover:border-[#FF6B35] transition-colors">
-                      <div className="flex items-center gap-3">
-                         {extra.imageUrl && (
-                           <img src={extra.imageUrl} alt="" className="w-10 h-10 rounded-xl object-cover" />
-                         )}
-                         <div>
-                           <p className="font-bold text-[14px] text-[#1A202C] leading-tight">{extra.name}</p>
-                           <p className="text-[13px] font-black text-[#FF6B35] mt-0.5">+€{(extra.price || 0).toFixed(2)}</p>
-                         </div>
-                      </div>
-                      
-                      {qty > 0 ? (
-                        <div className="flex items-center bg-[#F1F5F9] rounded-xl p-1 border border-[#E2E8F0]">
-                          <button onClick={() => setSelectedExtras(selectedExtras.map(e => e.id === extra.id ? { ...e, qty: e.qty - 1 } : e).filter(e => e.qty > 0))} className="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-sm text-[#4A5568] hover:text-[#1A202C]"><Minus className="w-4 h-4" /></button>
-                          <span className="w-8 text-center font-bold text-[14px] text-[#1A202C]">{qty}</span>
-                          <button onClick={() => setSelectedExtras(selectedExtras.map(e => e.id === extra.id ? { ...e, qty: Math.min(5, e.qty + 1) } : e))} className="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-sm text-[#4A5568] hover:text-[#1A202C]"><Plus className="w-4 h-4" /></button>
+            <div className="p-6 flex-1 overflow-y-auto bg-[#F8F9FA]">
+              {(() => {
+                let sections: any[] = [];
+                let hasCustomSections = false;
+                if (selectedProductForModal?.sectionsData) {
+                  try {
+                    sections = typeof selectedProductForModal.sectionsData === "string" 
+                      ? JSON.parse(selectedProductForModal.sectionsData) 
+                      : selectedProductForModal.sectionsData;
+                    if (sections && sections.length > 0) hasCustomSections = true;
+                  } catch(e) {}
+                }
+                
+                const isFood = categoriesWithGlobalExtras.includes(selectedProductForModal?.category || "");
+                if (sections.length === 0 && isFood) {
+                  sections = [
+                    { id: "veg", title: "Verduras", options: [{id:"lechuga",label:"Lechuga",price:0},{id:"tomate",label:"Tomate",price:0},{id:"cebolla",label:"Cebolla",price:0}] },
+                    { id: "sauces", title: "Salsas", max: 2, options: [{id:"blanca",label:"Salsa Blanca",price:0},{id:"picante",label:"Salsa Picante",price:0},{id:"ketchup",label:"Kétchup",price:0},{id:"mayonesa",label:"Mayonesa",price:0}] }
+                  ];
+                }
+
+                return (
+                  <>
+                    {sections && sections.length > 0 && sections.map(sec => (
+                      <div key={sec.id} className="mb-6 last:mb-0">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="text-[16px] font-extrabold text-[#1A202C]">{sec.title}</h3>
+                          {sec.max === 1 && <span className="text-[10px] font-black text-white bg-[#1A202C] px-2 py-0.5 rounded-md uppercase tracking-wider">Obligatorio</span>}
                         </div>
-                      ) : (
-                        <button onClick={() => setSelectedExtras([...selectedExtras, { id: extra.id, name: extra.name, price: extra.price || 0, qty: 1 }])} className="w-10 h-10 rounded-xl bg-[#FFF5F0] text-[#FF6B35] flex items-center justify-center hover:bg-[#FF6B35] hover:text-white transition-colors">
-                          <Plus className="w-5 h-5" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {sec.options.map((opt: any) => {
+                            const on = selectedExtras.some(e => e.id === opt.id);
+                            const maxed = !on && sec.max !== undefined && sec.max > 1 && selectedExtras.filter(e => sec.options.some((o:any) => o.id === e.id)).length >= sec.max;
+                            
+                            const toggle = () => {
+                              if (maxed) return;
+                              if (sec.max === 1) {
+                                // Remove any other option from this section
+                                const otherOptIds = sec.options.map((o:any) => o.id);
+                                setSelectedExtras([...selectedExtras.filter(e => !otherOptIds.includes(e.id)), { id: opt.id, name: opt.label, price: opt.price || 0, qty: 1 }]);
+                              } else {
+                                if (on) setSelectedExtras(selectedExtras.filter(e => e.id !== opt.id));
+                                else setSelectedExtras([...selectedExtras, { id: opt.id, name: opt.label, price: opt.price || 0, qty: 1 }]);
+                              }
+                            };
+                            
+                            return (
+                              <div key={opt.id} onClick={toggle}
+                                className={`flex items-center justify-between p-3 rounded-xl border-2 transition-all ${maxed ? 'opacity-50 grayscale cursor-not-allowed bg-gray-50 border-transparent' : 'cursor-pointer hover:border-[#FF6B35]'} ${on ? 'border-[#FF6B35] bg-[#FFF5F0]' : 'border-[#E2E8F0] bg-white'}`}>
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 transition-colors ${on ? 'bg-[#FF6B35] text-white' : 'bg-[#E2E8F0] text-transparent'}`}>
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                  </div>
+                                  <span className="text-[13px] font-bold text-[#1A202C]">{sec.id === "veg" && on ? <span className="text-red-500 line-through mr-1">Sin</span> : ""}{opt.label}</span>
+                                </div>
+                                {opt.price > 0 && <span className="text-[12px] font-black text-[#FF6B35]">+€{opt.price.toFixed(2)}</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {(!hasCustomSections && isFood && extrasProducts.length > 0) && (
+                      <>
+                        <h3 className="font-extrabold text-[15px] text-[#1A202C] mb-4 mt-6 uppercase tracking-wider">Añadir Extras</h3>
+                        <div className="space-y-3">
+                          {extrasProducts.map(extra => {
+                            const selected = selectedExtras.find(e => e.id === extra.id);
+                            const qty = selected ? selected.qty : 0;
+                            
+                            return (
+                              <div key={extra.id} className="flex items-center justify-between p-3 rounded-2xl border border-[#E2E8F0] bg-white hover:border-[#FF6B35] transition-colors">
+                                <div className="flex items-center gap-3">
+                                  {extra.imageUrl && (
+                                    <img src={extra.imageUrl} alt="" className="w-10 h-10 rounded-xl object-cover" />
+                                  )}
+                                  <div>
+                                    <p className="font-bold text-[14px] text-[#1A202C] leading-tight">{extra.name}</p>
+                                    <p className="text-[13px] font-black text-[#FF6B35] mt-0.5">+€{(extra.price || 0).toFixed(2)}</p>
+                                  </div>
+                                </div>
+                                
+                                {qty > 0 ? (
+                                  <div className="flex items-center bg-[#F1F5F9] rounded-xl p-1 border border-[#E2E8F0]">
+                                    <button onClick={() => setSelectedExtras(selectedExtras.map(e => e.id === extra.id ? { ...e, qty: e.qty - 1 } : e).filter(e => e.qty > 0))} className="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-sm text-[#4A5568] hover:text-[#1A202C]"><Minus className="w-4 h-4" /></button>
+                                    <span className="w-8 text-center font-bold text-[14px] text-[#1A202C]">{qty}</span>
+                                    <button onClick={() => setSelectedExtras(selectedExtras.map(e => e.id === extra.id ? { ...e, qty: Math.min(5, e.qty + 1) } : e))} className="w-8 h-8 flex items-center justify-center bg-white rounded-lg shadow-sm text-[#4A5568] hover:text-[#1A202C]"><Plus className="w-4 h-4" /></button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => setSelectedExtras([...selectedExtras, { id: extra.id, name: extra.name, price: extra.price || 0, qty: 1 }])} className="w-10 h-10 rounded-xl bg-[#FFF5F0] text-[#FF6B35] flex items-center justify-center hover:bg-[#FF6B35] hover:text-white transition-colors">
+                                    <Plus className="w-5 h-5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             <div className="p-6 border-t border-[#E2E8F0] shrink-0 bg-white">
@@ -600,6 +734,15 @@ export default function AdminTPV({ restaurant, products }: { restaurant: any, pr
         </div>
       )}
 
-    </>
+      {/* CONFIRM MODAL */}
+      <ConfirmModal
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        isDanger={confirmState.isDanger}
+        onConfirm={confirmState.onConfirm}
+        onCancel={() => setConfirmState(p => ({ ...p, isOpen: false }))}
+      />
+        </>
   );
 }

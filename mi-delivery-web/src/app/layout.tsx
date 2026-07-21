@@ -24,6 +24,9 @@ export const metadata: Metadata = {
   description: "Pide comida de tus restaurantes favoritos y recíbela en minutos. Kebabs, hamburguesas, pizza y mucho más.",
 };
 
+import { Toaster } from 'react-hot-toast';
+import { ConfirmProvider } from '@/components/ConfirmProvider';
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -34,7 +37,20 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <ConfirmProvider>
+          {children}
+          <Toaster position="bottom-right" toastOptions={{
+            style: {
+              borderRadius: '12px',
+              background: '#333',
+              color: '#fff',
+              fontWeight: 600,
+              fontSize: '14px',
+            },
+          }}/>
+        </ConfirmProvider>
+      </body>
     </html>
   );
 }

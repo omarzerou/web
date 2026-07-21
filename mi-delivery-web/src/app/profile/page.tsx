@@ -11,30 +11,43 @@ import {
   onAuthStateChanged,
   type User,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, storage } from "@/lib/firebase";
+import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { useRouter } from "next/navigation";
+import toast from 'react-hot-toast';
+import { useConfirm } from '@/components/ConfirmProvider';
 import Link from "next/link";
 import {
   Camera, ChevronLeft, ChevronRight, LogOut, Mail, Phone,
   Save, Shield, User as UserIcon, AlertCircle, CheckCircle,
-  Eye, EyeOff, Pencil, X, Clock, Heart, MapPin, Star, ShoppingBag
+  Eye, EyeOff, Pencil, X, Clock, Heart, MapPin, Star, ShoppingBag, Plus
 } from "lucide-react";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const GRADIENT = "linear-gradient(135deg,#FF6B35,#FFBE00)";
 
 function Avatar({ user, size = 88 }: { user: User; size?: number }) {
-  if (user.photoURL) {
+  const [localPhoto, setLocalPhoto] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user?.uid) {
+      setLocalPhoto(localStorage.getItem(`tastio_avatar_${user.uid}`));
+    }
+  }, [user?.uid, user?.photoURL]);
+
+  const photo = localPhoto || user?.photoURL;
+
+  if (photo) {
     return (
       <img
-        src={user.photoURL}
+        src={photo}
         alt="foto de perfil"
         referrerPolicy="no-referrer"
         style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", border: "3px solid #fff", boxShadow: "0 4px 16px rgba(0,0,0,0.12)" }}
       />
     );
   }
-  const letter = (user.displayName || user.email || "U")[0].toUpperCase();
+  const letter = (user?.displayName || user?.email || "U")[0].toUpperCase();
   return (
     <div style={{ width: size, height: size, borderRadius: "50%", background: GRADIENT, display: "flex", alignItems: "center", justifyContent: "center", border: "3px solid #fff", boxShadow: "0 4px 16px rgba(0,0,0,0.12)" }}>
       <span style={{ color: "#fff", fontSize: size * 0.4, fontWeight: 800 }}>{letter}</span>
@@ -72,7 +85,7 @@ function FieldRow({ label, value, onSave, type = "text", editable = true }: {
       setOk(true);
       setTimeout(() => setOk(false), 2500);
     } catch (e: any) {
-      alert(e.message || "Error al guardar");
+      toast.error(e.message || "Error al guardar");
     } finally {
       setLoading(false);
       setEditing(false);
@@ -216,6 +229,11 @@ export default function ProfilePage() {
   const [favRests, setFavRests]= useState<any[]>([]);
   const router = useRouter();
 
+  const [showAllOrders, setShowAllOrders] = useState(false);
+  const { confirm } = useConfirm();
+  const [showAllFavs, setShowAllFavs] = useState(false);
+  const [photoError, setPhotoError] = useState<string>("");
+
   // Estados de reseña
   const [reviewOrder, setReviewOrder] = useState<any>(null);
   const [reviewRating, setReviewRating] = useState(5);
@@ -237,16 +255,16 @@ export default function ProfilePage() {
         })
       });
       if (res.ok) {
-        alert("¡Reseña enviada con éxito!");
+        toast.success("¡Reseña enviada con éxito!");
         setReviewOrder(null);
         setReviewRating(5);
         setReviewComment("");
       } else {
         const error = await res.json();
-        alert(error.error || "Error al enviar la reseña");
+        toast.error(error.error || "Error al enviar la reseña");
       }
     } catch (e: any) {
-      alert("Error de red al enviar la reseña");
+      toast.error("Error de red al enviar la reseña");
     } finally {
       setSubmittingReview(false);
     }
@@ -353,16 +371,69 @@ export default function ProfilePage() {
     setDbUser((prev: any) => ({ ...prev, address: v }));
   };
 
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPhotoError("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setPhotoError("La foto original es demasiado grande. Máximo 2MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement("canvas");
+        const maxSize = 200;
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxSize) {
+            height = Math.round((height * maxSize) / width);
+            width = maxSize;
+          }
+        } else {
+          if (height > maxSize) {
+            width = Math.round((width * maxSize) / height);
+            height = maxSize;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        const base64 = canvas.toDataURL("image/jpeg", 0.7);
+        try {
+          // Subir a Firebase Storage
+          const storageRef = ref(storage, `tastio_avatars/${user.uid}.jpg`);
+          await uploadString(storageRef, base64, "data_url");
+          const downloadURL = await getDownloadURL(storageRef);
+
+          localStorage.setItem(`tastio_avatar_${user.uid}`, downloadURL);
+          setUser({ ...user, photoURL: downloadURL } as User);
+          await updateProfile(user, { photoURL: downloadURL });
+        } catch (e: any) {
+          console.error("Error al subir imagen a Storage", e);
+          setPhotoError("Error al subir la imagen. Intenta de nuevo.");
+        }
+      };
+      img.src = ev.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleDeleteAccount = async () => {
-    if (window.confirm("¿Estás seguro de que quieres eliminar tu cuenta permanentemente? Perderás todos tus pedidos y favoritos.")) {
+    const isConfirmed = await confirm({ title: "Eliminar Cuenta", message: "¿Estás seguro de que quieres eliminar tu cuenta permanentemente? Perderás todos tus pedidos y favoritos.", isDanger: true });
+    if (isConfirmed) {
       try {
         await deleteUser(user);
         router.push("/");
       } catch (e: any) {
         if (e.code === "auth/requires-recent-login") {
-          alert("Por seguridad, debes cerrar sesión y volver a entrar antes de eliminar tu cuenta.");
+          toast.error("Por seguridad, debes cerrar sesión y volver a entrar antes de eliminar tu cuenta.");
         } else {
-          alert("Error al eliminar cuenta: " + e.message);
+          toast.error("Error al eliminar cuenta: " + e.message);
         }
       }
     }
@@ -398,8 +469,15 @@ export default function ProfilePage() {
           <div className="px-6 pb-6">
             {/* Avatar overlapping cover */}
             <div className="flex items-end justify-between -mt-11 mb-4">
-              <div className="relative">
+              <div className="relative group cursor-pointer inline-block" onClick={() => document.getElementById('photoUpload')?.click()}>
                 <Avatar user={user} size={88} />
+                <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                   <Plus className="w-8 h-8 text-white" />
+                </div>
+                {/* Plus icon in the corner */}
+                <div className="absolute bottom-0 right-0 w-7 h-7 bg-[#FF6B35] rounded-full border-2 border-white flex items-center justify-center shadow-md">
+                   <Plus className="w-4 h-4 text-white" />
+                </div>
                 {/* Tooltip hint for Google users */}
                 {isGoogle && (
                   <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white border border-[#F0F0F0] flex items-center justify-center shadow-sm">
@@ -412,7 +490,14 @@ export default function ProfilePage() {
                   </div>
                 )}
               </div>
+              <input type="file" id="photoUpload" className="hidden" accept="image/png, image/jpeg, image/webp" onChange={handlePhotoUpload} />
             </div>
+
+            {photoError && (
+              <div className="bg-red-50 text-red-500 p-3 rounded-xl mb-4 text-[13px] font-bold border border-red-100 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" /> {photoError}
+              </div>
+            )}
 
             <h1 className="text-[22px] font-extrabold text-[#1B1B1B] leading-tight">
               {user.displayName || user.email?.split("@")[0]}
@@ -444,9 +529,6 @@ export default function ProfilePage() {
           <FieldRow label="Correo electrónico" value={user.email || ""} editable={false} />
           <FieldRow label="Teléfono" value={dbUser?.phone || ""} onSave={savePhone} />
 
-          {!isGoogle && (
-            <FieldRow label="URL de foto de perfil" value={user.photoURL || ""} onSave={savePhoto} type="url" />
-          )}
           <FieldRow label="Cuenta creada con" value={isGoogle ? "Google" : "Correo y contraseña"} editable={false} />
         </Card>
 
@@ -485,33 +567,42 @@ export default function ProfilePage() {
               </Link>
             </div>
           ) : (
-            <div className="space-y-4 mt-2">
-              {orders.map((o: any) => (
-                <div key={o.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-[#F9F9F9] rounded-2xl border border-[#F0F0F0]">
-                  <div className="flex items-center gap-3">
-                     {o.restaurant?.imageUrl ? <img src={o.restaurant.imageUrl} className="w-12 h-12 rounded-xl object-cover" /> : <div className="w-12 h-12 rounded-xl bg-gray-200" />}
-                     <div>
-                       <div className="text-[15px] font-bold text-[#1B1B1B]">{o.restaurant?.name || "Restaurante"}</div>
-                       <div className="text-[12px] text-[#888]">{new Date(o.createdAt).toLocaleDateString()} · {o.items?.length} items</div>
-                     </div>
+            <div className="mt-2">
+              <div className="space-y-4">
+                {(showAllOrders ? orders : orders.slice(0, 4)).map((o: any) => (
+                  <div key={o.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-[#F9F9F9] rounded-2xl border border-[#F0F0F0]">
+                    <div className="flex items-center gap-3">
+                       {o.restaurant?.imageUrl ? <img src={o.restaurant.imageUrl} className="w-12 h-12 rounded-xl object-cover" /> : <div className="w-12 h-12 rounded-xl bg-gray-200" />}
+                       <div>
+                         <div className="text-[15px] font-bold text-[#1B1B1B]">{o.restaurant?.name || "Restaurante"}</div>
+                         <div className="text-[12px] text-[#888]">{new Date(o.createdAt).toLocaleDateString()} · {o.items?.length} items</div>
+                       </div>
+                    </div>
+                    <div className="mt-3 sm:mt-0 flex flex-col items-start sm:items-end justify-between gap-2">
+                       <div className="flex flex-row sm:flex-col items-center sm:items-end gap-3 w-full justify-between">
+                         <div className="text-[16px] font-extrabold text-[#FF6B35]">€{o.totalAmount.toFixed(2)}</div>
+                         <div className="text-[11px] font-bold px-2 py-1 bg-green-100 text-green-600 rounded-md mt-1 uppercase tracking-wider">{o.status}</div>
+                       </div>
+                       {o.status === "DELIVERED" ? (
+                         <button onClick={() => setReviewOrder(o)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
+                           <Star className="w-3.5 h-3.5 fill-current" /> Dejar una reseña
+                         </button>
+                       ) : (
+                         <button onClick={() => router.push(`/rastreo/${o.id}`)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
+                           <Clock className="w-3.5 h-3.5" /> Rastrear pedido
+                         </button>
+                       )}
+                    </div>
                   </div>
-                  <div className="mt-3 sm:mt-0 flex flex-col items-start sm:items-end justify-between gap-2">
-                     <div className="flex flex-row sm:flex-col items-center sm:items-end gap-3 w-full justify-between">
-                       <div className="text-[16px] font-extrabold text-[#FF6B35]">€{o.totalAmount.toFixed(2)}</div>
-                       <div className="text-[11px] font-bold px-2 py-1 bg-green-100 text-green-600 rounded-md mt-1 uppercase tracking-wider">{o.status}</div>
-                     </div>
-                     {o.status === "DELIVERED" ? (
-                       <button onClick={() => setReviewOrder(o)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
-                         <Star className="w-3.5 h-3.5 fill-current" /> Dejar una reseña
-                       </button>
-                     ) : (
-                       <button onClick={() => router.push(`/rastreo/${o.id}`)} className="text-[12px] font-bold text-[#FF6B35] hover:underline flex items-center gap-1 mt-1">
-                         <Clock className="w-3.5 h-3.5" /> Rastrear pedido
-                       </button>
-                     )}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
+              {orders.length > 4 && (
+                <button 
+                  onClick={() => setShowAllOrders(!showAllOrders)}
+                  className="w-full mt-4 py-3 bg-[#F7F7F7] text-[#1B1B1B] text-[13px] font-bold rounded-xl hover:bg-[#F0F0F0] cursor-pointer transition-colors border-none">
+                  {showAllOrders ? "Ver menos" : `Ver ${orders.length - 4} pedidos más`}
+                </button>
+              )}
             </div>
           )}
         </Card>
@@ -527,18 +618,27 @@ export default function ProfilePage() {
               <p className="text-[13px] text-[#AAAAAA]">Guarda tus restaurantes favoritos para acceder más rápido</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
-              {favRests.map((r: any) => (
-                <Link key={r.id} href={`/restaurant/${r.slug || r.id}`} className="no-underline group">
-                  <div className="flex items-center gap-3 p-3 bg-white border border-[#F0F0F0] rounded-2xl shadow-sm hover:shadow-md transition-shadow">
-                    <img src={r.imageUrl || r.heroImg} className="w-16 h-16 rounded-xl object-cover" />
-                    <div>
-                      <div className="text-[14px] font-bold text-[#1B1B1B] group-hover:text-[#FF6B35] transition-colors">{r.name}</div>
-                      <div className="text-[12px] text-[#888] line-clamp-1">{r.address || r.description}</div>
+            <div className="mt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {(showAllFavs ? favRests : favRests.slice(0, 4)).map((r: any) => (
+                  <Link key={r.id} href={`/restaurant/${r.slug || r.id}`} className="no-underline group">
+                    <div className="flex items-center gap-3 p-3 bg-white border border-[#F0F0F0] rounded-2xl shadow-sm hover:shadow-md transition-shadow">
+                      <img src={r.imageUrl || r.heroImg} className="w-16 h-16 rounded-xl object-cover" />
+                      <div>
+                        <div className="text-[14px] font-bold text-[#1B1B1B] group-hover:text-[#FF6B35] transition-colors">{r.name}</div>
+                        <div className="text-[12px] text-[#888] line-clamp-1">{r.address || r.description}</div>
+                      </div>
                     </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                ))}
+              </div>
+              {favRests.length > 4 && (
+                <button 
+                  onClick={() => setShowAllFavs(!showAllFavs)}
+                  className="w-full mt-4 py-3 bg-[#F7F7F7] text-[#1B1B1B] text-[13px] font-bold rounded-xl hover:bg-[#F0F0F0] cursor-pointer transition-colors border-none">
+                  {showAllFavs ? "Ver menos" : `Ver ${favRests.length - 4} restaurantes más`}
+                </button>
+              )}
             </div>
           )}
         </Card>

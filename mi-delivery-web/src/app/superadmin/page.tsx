@@ -13,6 +13,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import dynamic from "next/dynamic";
+import toast from 'react-hot-toast';
+import { useConfirm } from '@/components/ConfirmProvider';
 
 const MapView = dynamic(() => import("../mapa/MapView"), { ssr: false });
 
@@ -38,6 +40,7 @@ export default function SuperAdminPage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState("");
   const [fetchError, setFetchError] = useState("");
+  const { confirm } = useConfirm();
 
   // Vista de restaurante individual
   const [selectedRestaurant, setSelectedRestaurant] = useState<any>(null);
@@ -171,7 +174,7 @@ export default function SuperAdminPage() {
       });
       if (res.ok) {
         setRestaurantsList(prev => prev.map(r => r.id === id ? { ...r, subscriptionPlan } : r));
-        alert(`Suscripción actualizada a ${subscriptionPlan}`);
+        toast.success(`Suscripción actualizada a ${subscriptionPlan}`);
       }
     } catch (e) {}
   };
@@ -226,7 +229,8 @@ export default function SuperAdminPage() {
   };
 
   const handleDeleteProduct = async (productId: string) => {
-    if (!confirm("¿Eliminar este plato?")) return;
+    const isConfirmed = await confirm({ title: "Eliminar Plato", message: "¿Seguro que quieres eliminar este plato?", isDanger: true });
+    if (!isConfirmed) return;
     try {
       const user = auth.currentUser;
       if (!user) return;
@@ -614,11 +618,12 @@ export default function SuperAdminPage() {
                               <select
                                 className={`text-[12px] px-2 py-1.5 rounded-lg font-bold outline-none cursor-pointer border ${r.subscriptionPlan === 'FREE' ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-orange-50 border-orange-200 text-orange-600'}`}
                                 value={r.subscriptionPlan || 'FREE'}
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const newVal = e.target.value;
                                   if (newVal !== r.subscriptionPlan) {
                                     const planName = newVal === 'MONTHLY' ? 'Mensual' : newVal === 'ANNUAL' ? 'Anual' : 'Gratuito';
-                                    if (confirm(`¿Cambiar suscripción de ${r.name} a ${planName}?`)) {
+                                    const isConfirmed = await confirm({ title: "Cambiar Suscripción", message: `¿Cambiar suscripción de ${r.name} a ${planName}?`, isDanger: false });
+                                    if (isConfirmed) {
                                       updateRestaurantSubscription(r.id, newVal);
                                     }
                                   }
@@ -867,9 +872,10 @@ export default function SuperAdminPage() {
                               </span>
                               <button
                                 onClick={async () => {
-                                  if (confirm(`¿Restaurar acceso de admin a ${r.owner?.name}?`)) {
+                                  const isConfirmed = await confirm({ title: "Restaurar Acceso", message: `¿Restaurar acceso de admin a ${r.owner?.name}?`, isDanger: false });
+                                  if (isConfirmed) {
                                     const ok = await changeUserRole(r.owner?.id, 'RESTAURANT_OWNER', 'Restaurado por SuperAdmin');
-                                    if (!ok) alert('Error al restaurar el acceso');
+                                    if (!ok) toast.error('Error al restaurar el acceso');
                                   }
                                 }}
                                 className="flex items-center gap-1.5 text-[12px] font-bold text-green-600 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors">
@@ -886,11 +892,12 @@ export default function SuperAdminPage() {
                                   <select
                                     className={`text-[12px] px-2 py-1.5 rounded-lg font-bold outline-none cursor-pointer border ${r.subscriptionPlan === 'FREE' ? 'bg-gray-50 border-gray-200 text-gray-600' : 'bg-orange-50 border-orange-200 text-orange-600'}`}
                                     value={r.subscriptionPlan || 'FREE'}
-                                    onChange={(e) => {
+                                    onChange={async (e) => {
                                       const newVal = e.target.value;
                                       if (newVal !== r.subscriptionPlan) {
                                         const planName = newVal === 'MONTHLY' ? 'Mensual' : newVal === 'ANNUAL' ? 'Anual' : 'Gratuito';
-                                        if (confirm(`¿Cambiar suscripción de ${r.name} a ${planName}?`)) {
+                                        const isConfirmed = await confirm({ title: "Cambiar Suscripción", message: `¿Cambiar suscripción de ${r.name} a ${planName}?`, isDanger: false });
+                                        if (isConfirmed) {
                                           updateRestaurantSubscription(r.id, newVal);
                                         }
                                       }
@@ -912,9 +919,9 @@ export default function SuperAdminPage() {
                                   if (reason !== null) {
                                     const ok = await changeUserRole(r.owner?.id, 'CLIENT', reason || 'Sin especificar');
                                     if (ok) {
-                                      alert(`✅ ${r.owner?.name} ha sido suspendido. Ya no puede entrar al panel admin.`);
+                                      toast.success(`✅ ${r.owner?.name} ha sido suspendido. Ya no puede entrar al panel admin.`);
                                     } else {
-                                      alert('❌ Error al suspender al usuario');
+                                      toast.error('❌ Error al suspender al usuario');
                                     }
                                   }
                                 }}

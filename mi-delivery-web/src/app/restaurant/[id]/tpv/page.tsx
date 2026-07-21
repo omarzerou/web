@@ -7,6 +7,7 @@ import Link from "next/link";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import { useConfirm } from '@/components/ConfirmProvider';
 
 // ── CUSTOMIZATION MODAL (TPV Version) ─────────────────────────────────────────
 function TpvCustomModal({ product, restId, restName, onClose, onAdd }: {
@@ -43,7 +44,7 @@ function TpvCustomModal({ product, restId, restName, onClose, onAdd }: {
 
     onAdd({ cid: Math.random().toString(36).slice(2), pid: product.id, name: product.name,
       basePrice: product.price, extrasPrice: ep, img: product.img, qty: 1,
-      extras: extrasLabels, restId, restName });
+      extras: extrasLabels, optionsIds: selIds, restId, restName });
     onClose();
   };
 
@@ -107,6 +108,7 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
   const [rest, setRest] = useState<RestInfo | null>(null);
   
   const [ticket, setTicket] = useState<CartItem[]>([]);
+  const { confirm } = useConfirm();
   const [modal, setModal] = useState<Product | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   
@@ -136,7 +138,7 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
               if (!Array.isArray(data)) return;
               const apiRest = data.find((r: any) => r.slug === id || r.id === id);
               if (apiRest) {
-                const categoryOrder = ["Más Vendidos", "Menús", "Bandejas", "Camperos", "Hamburguesas", "Kebabs", "Shawarmas", "Chawarmas", "Pizzas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas"];
+                const categoryOrder = ["Más Vendidos", "Hamburguesas", "Kebabs", "Menús", "Camperos", "Pizzas", "Bandejas", "Shawarmas", "Chawarmas", "Tacos", "Pitas y Media Luna", "Media Luna", "Bocadillos", "Entrantes", "Guarniciones", "Postres", "Bebidas"];
                 // Filter out Extras — they are embedded inside sectionsData of main products
                 const visibleProducts = apiRest.products.filter((p: any) => p.category !== 'Extras');
                 let categories = Array.from(new Set(visibleProducts.map((p: any) => p.category || "Sin Categoría"))) as string[];
@@ -148,14 +150,34 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
                   if (iB === -1) return -1;
                   return iA - iB;
                 });
-                const mapProduct = (p: any) => ({
-                  id: p.id,
-                  name: p.name,
-                  desc: p.description || "",
-                  price: p.price,
-                  img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
-                  sections: p.sectionsData ? JSON.parse(p.sectionsData) : undefined
-                });
+                const extrasProducts = apiRest.products
+                  .filter((p: any) => p.category === 'Extras')
+                  .map((p: any) => ({ id: p.id, label: p.name, price: p.price || 0 }));
+                
+                const categoriesWithGlobalExtras = ["Hamburguesas", "Kebabs", "Bocadillos", "Camperos", "Pitas y Media Luna", "Shawarmas", "Tacos", "Chawarmas", "Menús"];
+                
+                const mapProduct = (p: any) => {
+                  let sections = p.sectionsData ? JSON.parse(p.sectionsData) : undefined;
+                  const isFood = categoriesWithGlobalExtras.includes(p.category || "");
+                  
+                  if (!sections && isFood) {
+                    sections = [
+                      { id: "veg", title: "Elige tus vegetales:", options: [{id:"lechuga",label:"Lechuga",price:0},{id:"tomate",label:"Tomate",price:0},{id:"cebolla",label:"Cebolla",price:0},{id:"maiz",label:"Maíz",price:0},{id:"zanahoria",label:"Zanahoria",price:0}] },
+                      { id: "sauces", title: "¿Qué salsas quieres?:", max: 2, options: [{id:"blanca",label:"Salsa Blanca",price:0},{id:"picante",label:"Salsa Picante",price:0},{id:"ketchup",label:"Kétchup",price:0},{id:"mayonesa",label:"Mayonesa",price:0},{id:"barbacoa",label:"Barbacoa",price:0}] }
+                    ];
+                    if (extrasProducts.length > 0) {
+                      sections.push({ id: "extras", title: "Añadir Extras", options: extrasProducts });
+                    }
+                  }
+                  return {
+                    id: p.id,
+                    name: p.name,
+                    desc: p.description || "",
+                    price: p.price,
+                    img: p.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop",
+                    sections
+                  };
+                };
                 // "Más Vendidos" tab: featured products first, then all visible
                 const bestSellers = visibleProducts
                   .filter((p: any) => p.isFeatured)
@@ -179,7 +201,12 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
                   name: apiRest.name,
                   tagline: apiRest.address || "Local asociado a Tastio",
                   heroImg: apiRest.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1400&h=600&fit=crop",
-                  time: "15-30 min", rating: "Nuevo", delivery: "€1.99", minOrder: "€8.00", openUntil: "23:00",
+                  time: "15-30 min", 
+                  rating: "Nuevo", 
+                  delivery: `€${(apiRest.deliveryFee ?? 1.99).toFixed(2)}`,
+                  deliveryFee: apiRest.deliveryFee ?? 1.99,
+                  minOrder: "€8.00", 
+                  openUntil: "23:00",
                   menu
                 });
               }
@@ -224,15 +251,39 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
     setTicket(ticket.filter(c => c.cid !== cid));
   };
 
-  const clearTicket = () => {
-    if (confirm("¿Estás seguro de cancelar este ticket?")) {
+  const clearTicket = async () => {
+    const isConfirmed = await confirm({ title: "Cancelar Ticket", message: "¿Estás seguro de cancelar este ticket?", isDanger: true });
+    if (isConfirmed) {
       setTicket([]);
       setCashGiven("");
     }
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    try {
+      const user = auth.currentUser;
+      const token = user ? await user.getIdToken() : "";
+      await fetch("http://localhost:4000/api/pedidos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({
+          restaurantId: rest?.id || id,
+          paymentMethod: paymentMethod === 'cash' ? 'CASH' : 'DATAPHONE',
+          deliveryAddress: "En Local (TPV)",
+          orderType: "DINE_IN",
+          items: ticket.map(item => ({
+            productId: item.pid,
+            quantity: item.qty,
+            options: item.optionsIds || []
+          }))
+        })
+      });
+    } catch (e) {
+      console.error(e);
+    }
     window.print();
+    setTicket([]);
+    setCashGiven("");
   };
 
   return (
@@ -314,10 +365,10 @@ export default function TPVPage({ params }: { params: Promise<{ id: string }> })
         </div>
 
         {/* Categories Tabs */}
-        <div className="bg-white border-b border-[#E5E7EB] shrink-0 px-6 py-3 flex gap-2 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="bg-white border-b border-[#E5E7EB] shrink-0 px-6 py-3 flex flex-nowrap gap-2 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
           {rest.menu.map((cat, i) => (
             <button key={cat.id} onClick={() => setActiveTab(i)}
-              className={`px-5 py-3 rounded-xl font-bold text-[15px] whitespace-nowrap transition-colors ${activeTab === i ? 'bg-[#111827] text-white' : 'bg-[#F3F4F6] text-[#4B5563] hover:bg-[#E5E7EB]'}`}>
+              className={`shrink-0 px-5 py-3 rounded-xl font-bold text-[15px] whitespace-nowrap transition-colors ${activeTab === i ? 'bg-[#111827] text-white' : 'bg-[#F3F4F6] text-[#4B5563] hover:bg-[#E5E7EB]'}`}>
               {cat.name}
             </button>
           ))}

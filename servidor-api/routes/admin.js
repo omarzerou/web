@@ -70,7 +70,7 @@ router.get('/orders', validarTokenFirebase, soloRestaurantOwner, async (req, res
 
     const orders = await prisma.order.findMany({
       where: { restaurantId: restaurant.id },
-      include: { client: { select: { id: true, name: true, email: true, phone: true } }, items: { include: { product: true } } },
+      include: { client: { select: { id: true, name: true, email: true, phone: true, address: true } }, items: { include: { product: true } } },
       orderBy: { createdAt: 'desc' },
       take: 100
     });
@@ -90,7 +90,7 @@ router.get('/my-restaurant', validarTokenFirebase, soloRestaurantOwner, async (r
     const orders = await prisma.order.findMany({
       where: { restaurantId: restaurant.id },
       include: {
-        client: { select: { id: true, name: true, email: true, phone: true } },
+        client: { select: { id: true, name: true, email: true, phone: true, address: true } },
         items: { include: { product: true } }
       },
       orderBy: { createdAt: 'desc' },
@@ -130,7 +130,7 @@ router.get('/products', validarTokenFirebase, soloRestaurantOwner, async (req, r
   }
 });
 
-// Pedidos por día de la semana (últimos 7 días) — para gráfica
+// Pedidos para gráficas (semanal, mensual, anual)
 router.get('/chart-data', validarTokenFirebase, soloRestaurantOwner, async (req, res) => {
   try {
     const rawRestId = req.headers['x-restaurant-id'];
@@ -140,26 +140,45 @@ router.get('/chart-data', validarTokenFirebase, soloRestaurantOwner, async (req,
       : await prisma.restaurant.findFirst({ where: { ownerId: req.dbUser.id } });
     if (!restaurant) return res.status(404).json({ error: 'Sin restaurante' });
 
+    const result = { weekly: [], monthly: [], yearly: [] };
+
+    // Semanal (Últimos 7 días)
     const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-    const result = [];
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
       const start = new Date(date.setHours(0, 0, 0, 0));
       const end = new Date(date.setHours(23, 59, 59, 999));
-      const count = await prisma.order.count({
-        where: { restaurantId: restaurant.id, createdAt: { gte: start, lte: end } }
-      });
-      const revenue = await prisma.order.aggregate({
-        _sum: { totalAmount: true },
-        where: { restaurantId: restaurant.id, status: 'DELIVERED', createdAt: { gte: start, lte: end } }
-      });
-      result.push({
-        name: days[start.getDay()],
-        pedidos: count,
-        ingresos: revenue._sum.totalAmount || 0
-      });
+      const count = await prisma.order.count({ where: { restaurantId: restaurant.id, createdAt: { gte: start, lte: end } } });
+      const revenue = await prisma.order.aggregate({ _sum: { totalAmount: true }, where: { restaurantId: restaurant.id, status: 'DELIVERED', createdAt: { gte: start, lte: end } } });
+      result.weekly.push({ name: days[start.getDay()], pedidos: count, ingresos: revenue._sum.totalAmount || 0 });
     }
+
+    // Mensual (Últimas 4 semanas)
+    for (let i = 3; i >= 0; i--) {
+      const end = new Date();
+      end.setDate(end.getDate() - i * 7);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      start.setHours(0,0,0,0);
+      end.setHours(23,59,59,999);
+      const count = await prisma.order.count({ where: { restaurantId: restaurant.id, createdAt: { gte: start, lte: end } } });
+      const revenue = await prisma.order.aggregate({ _sum: { totalAmount: true }, where: { restaurantId: restaurant.id, status: 'DELIVERED', createdAt: { gte: start, lte: end } } });
+      result.monthly.push({ name: `Sem ${4 - i}`, pedidos: count, ingresos: revenue._sum.totalAmount || 0 });
+    }
+
+    // Anual (Últimos 12 meses)
+    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    for (let i = 11; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(date.getMonth() - i);
+      const start = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0);
+      const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+      const count = await prisma.order.count({ where: { restaurantId: restaurant.id, createdAt: { gte: start, lte: end } } });
+      const revenue = await prisma.order.aggregate({ _sum: { totalAmount: true }, where: { restaurantId: restaurant.id, status: 'DELIVERED', createdAt: { gte: start, lte: end } } });
+      result.yearly.push({ name: months[start.getMonth()], pedidos: count, ingresos: revenue._sum.totalAmount || 0 });
+    }
+
     res.json(result);
   } catch (error) {
     console.error('[chart-data]', error.message);

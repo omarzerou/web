@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { 
   Search, Bell, ChevronDown, 
@@ -12,8 +12,10 @@ import {
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area, PieChart, Pie, Cell } from "recharts";
 import AdminTPV from "@/components/AdminTPV";
+import toast from 'react-hot-toast';
+import { useConfirm } from '@/components/ConfirmProvider';
 
 // ─── TRADUCCIONES ─────────────────────────────────────────────────────────────
 const getHeaders = (token: string, isJson: boolean = false) => {
@@ -92,11 +94,17 @@ export default function AdminPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [restaurant, setRestaurant] = useState<any>(null);
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [chartDataAll, setChartDataAll] = useState<any>({ weekly: [], monthly: [], yearly: [] });
+  const [revenuePeriod, setRevenuePeriod] = useState("yearly");
+  const [ordersPeriod, setOrdersPeriod] = useState("weekly");
+  const [categoryPeriod, setCategoryPeriod] = useState("monthly");
+  const [trendingPeriod, setTrendingPeriod] = useState("weekly");
+  const [typesPeriod, setTypesPeriod] = useState("monthly");
   const [lang, setLang] = useState("Español");
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const userRef = useRef<any>(null);
+  const { confirm } = useConfirm();
 
   // Notificaciones
   const [notifCount, setNotifCount] = useState(0);
@@ -174,9 +182,51 @@ export default function AdminPage() {
         return;
       }
       setIsAuthorized(true);
-      if (resOrders.ok) setOrders(await resOrders.json());
+      if (resOrders.ok) {
+        const fetchedOrders = await resOrders.json();
+        const mappedOrders = fetchedOrders.map((o: any) => {
+          if (o.items) {
+            o.items = o.items.map((it: any) => {
+               if (it.options) {
+                  try {
+                    let sections: any[] = [];
+                    if (it.product?.sectionsData) {
+                       sections = JSON.parse(it.product.sectionsData);
+                    } else if (it.product) {
+                       const categoriesWithGlobalExtras = ["Hamburguesas", "Kebabs", "Bocadillos", "Camperos", "Pitas y Media Luna", "Shawarmas", "Tacos", "Chawarmas", "Menús"];
+                       if (categoriesWithGlobalExtras.includes(it.product.category || "")) {
+                         sections = [
+                           { id: "veg", title: "Elige tus vegetales:", options: [{id:"lechuga",label:"Lechuga"},{id:"tomate",label:"Tomate"},{id:"cebolla",label:"Cebolla"},{id:"maiz",label:"Maíz"},{id:"zanahoria",label:"Zanahoria"}] },
+                           { id: "sauces", title: "¿Qué salsas quieres?:", max: 2, options: [{id:"blanca",label:"Salsa Blanca"},{id:"picante",label:"Salsa Picante"},{id:"ketchup",label:"Kétchup"},{id:"mayonesa",label:"Mayonesa"},{id:"barbacoa",label:"Barbacoa"},{id:"yogur",label:"Yogur"},{id:"mostaza",label:"Mostaza"},{id:"alioili",label:"Alioli"}] }
+                         ];
+                       }
+                    }
+                    
+                    let optsIds = JSON.parse(it.options);
+                    if (!Array.isArray(optsIds) && typeof optsIds === 'object') {
+                       optsIds = Object.values(optsIds).flat();
+                    }
+                    if (Array.isArray(optsIds)) {
+                       it.extras = optsIds.map((id: any) => {
+                          for (const s of sections) {
+                             const opt = (s.options || []).find((x: any) => x.id === id);
+                             if (opt) return { name: opt.label, qty: 1, section: s.title };
+                          }
+                          // Fallback
+                          return { name: id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' '), qty: 1, section: "Añadir Extras" };
+                       }).filter(Boolean);
+                    }
+                  } catch (e) {}
+               }
+               return it;
+            });
+          }
+          return o;
+        });
+        setOrders(mappedOrders);
+      }
       if (resProducts.ok) setProducts(await resProducts.json());
-      if (resChart.ok) setChartData(await resChart.json());
+      if (resChart.ok) setChartDataAll(await resChart.json());
     } catch (e) {}
   }, [router]);
 
@@ -264,6 +314,82 @@ export default function AdminPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
+  const filterOrdersByPeriod = useCallback((ordersList: any[], period: string) => {
+    const now = new Date();
+    let startTime = 0;
+    if (period === 'weekly') {
+      startTime = now.getTime() - 7 * 24 * 60 * 60 * 1000;
+    } else if (period === 'monthly') {
+      startTime = now.getTime() - 30 * 24 * 60 * 60 * 1000;
+    } else if (period === 'yearly') {
+      startTime = now.getTime() - 365 * 24 * 60 * 60 * 1000;
+    }
+    return ordersList.filter(o => new Date(o.createdAt).getTime() >= startTime);
+  }, []);
+
+  const categoryData = useMemo(() => {
+    const filteredOrders = filterOrdersByPeriod(orders, categoryPeriod);
+    const cats: Record<string, number> = {};
+    filteredOrders.forEach(o => {
+      o.items?.forEach((i: any) => {
+        const cat = i.product?.category || "Otros";
+        cats[cat] = (cats[cat] || 0) + i.quantity;
+      });
+    });
+    if (Object.keys(cats).length === 0) {
+      products.forEach(p => {
+        const cat = p.category || "Otros";
+        cats[cat] = (cats[cat] || 0) + 1;
+      });
+    }
+    const total = Object.values(cats).reduce((a, b) => a + b, 0) || 1;
+    const colors = ['#FF6B35', '#FFBE00', '#10B981', '#3182CE', '#6C5DD3'];
+    return Object.entries(cats)
+      .map(([name, val], i) => ({ name, value: Math.round((val / total) * 100), color: colors[i % colors.length] }))
+      .sort((a, b) => b.value - a.value).slice(0, 4);
+  }, [orders, products, categoryPeriod, filterOrdersByPeriod]);
+
+  const topProducts = useMemo(() => {
+    const filteredOrders = filterOrdersByPeriod(orders, trendingPeriod);
+    const sales: Record<string, number> = {};
+    filteredOrders.forEach(o => {
+      o.items?.forEach((i: any) => {
+        sales[i.productId] = (sales[i.productId] || 0) + i.quantity;
+      });
+    });
+    return [...products]
+      .map(p => ({ ...p, sold: sales[p.id] || 0 }))
+      .sort((a, b) => b.sold - a.sold)
+      .slice(0, 3);
+  }, [products, orders, trendingPeriod, filterOrdersByPeriod]);
+
+  const orderTypesStats = useMemo(() => {
+    const filteredOrders = filterOrdersByPeriod(orders, typesPeriod);
+    const total = filteredOrders.length || 1;
+    let delivery = 0;
+    let takeaway = 0;
+    filteredOrders.forEach(o => {
+      if (o.orderType === 'DELIVERY') delivery++;
+      else takeaway++; // For TPV/TAKEAWAY
+    });
+    return [
+      { label: "A domicilio (Delivery)", percent: Math.round((delivery/total)*100), num: delivery, icon: <Package className="w-5 h-5 text-[#FF6B35]" />, color: "#FF6B35" },
+      { label: "Para recoger (Takeaway)", percent: Math.round((takeaway/total)*100), num: takeaway, icon: <ShoppingBag className="w-5 h-5 text-[#FFBE00]" />, color: "#FFBE00" }
+    ];
+  }, [orders, typesPeriod, filterOrdersByPeriod]);
+
+  const currentRevenue = useMemo(() => {
+    const data = chartDataAll[revenuePeriod] || [];
+    if (data.length === 0) return stats.revenue || 0; // Fallback for all-time if no data loaded
+    return data.reduce((acc: number, curr: any) => acc + (curr.ingresos || 0), 0);
+  }, [chartDataAll, revenuePeriod, stats.revenue]);
+
+  const currentOrdersCount = useMemo(() => {
+    const data = chartDataAll[ordersPeriod] || [];
+    if (data.length === 0) return stats.orders || 0; // Fallback for all-time
+    return data.reduce((acc: number, curr: any) => acc + (curr.pedidos || 0), 0);
+  }, [chartDataAll, ordersPeriod, stats.orders]);
+
   // ─── TIME HELPERS ─────────────────────────────────────────────────────────
   const formatOrderTime = (createdAt: string) => {
     if (!createdAt) return "--:--";
@@ -271,25 +397,25 @@ export default function AdminPage() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const getDelayInfo = (createdAt: string, bufferTime: number) => {
-    if (!createdAt) return { text: "Calculando...", isDelayed: false };
+  const getDelayInfo = (createdAt: string, _bufferTime?: number) => {
+    if (!createdAt) return { text: "Calculando...", isDelayed: false, creationTime: "--:--" };
     const orderTime = new Date(createdAt).getTime();
-    const estimatedTime = orderTime + bufferTime * 60000;
     const now = Date.now();
-    const diffMinutes = Math.floor((now - estimatedTime) / 60000);
+    const elapsedMinutes = Math.floor((now - orderTime) / 60000);
+    const creationTime = new Date(orderTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
-    if (diffMinutes > 0) {
-      return { text: `Retraso: +${diffMinutes} min`, isDelayed: true };
-    } else {
-      return { text: `Quedan: ${Math.abs(diffMinutes)} min`, isDelayed: false };
-    }
+    return { 
+      text: `Lleva: ${elapsedMinutes} min`, 
+      isDelayed: elapsedMinutes >= 60,
+      creationTime
+    };
   };
 
   // ─── HANDLERS ─────────────────────────────────────────────────────────────
 
   const handleImageUpload = (file: File, setImage: (s: string) => void) => {
     if (file.size > 2 * 1024 * 1024) {
-      alert("La imagen no puede superar 2MB");
+      toast.error("La imagen no puede superar 2MB");
       return;
     }
     const reader = new FileReader();
@@ -358,7 +484,8 @@ export default function AdminPage() {
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!confirm("¿Eliminar este plato?")) return;
+    const isConfirmed = await confirm({ title: "Eliminar Plato", message: "¿Eliminar este plato?", isDanger: true });
+    if (!isConfirmed) return;
     try {
       const user = auth.currentUser;
       if (!user) return;
@@ -377,7 +504,7 @@ export default function AdminPage() {
       if (!user) return;
       const token = await user.getIdToken();
       const res = await fetch(`http://localhost:4000/api/products/${id}`, {
-        method: "PUT",
+        method: "PATCH",
         headers: getHeaders(token, true),
         body: JSON.stringify({ price })
       });
@@ -394,7 +521,7 @@ export default function AdminPage() {
       if (!user) return;
       const token = await user.getIdToken();
       const res = await fetch(`http://localhost:4000/api/products/${id}`, {
-        method: "PUT",
+        method: "PATCH",
         headers: getHeaders(token, true),
         body: JSON.stringify({ [field]: value })
       });
@@ -518,7 +645,7 @@ export default function AdminPage() {
         headers
       });
       if (res.ok) {
-        alert("✅ Pago configurado con éxito. Suscripción activada.");
+        toast.success("✅ Pago configurado con éxito. Suscripción activada.");
         fetchAdminData(user);
       }
     } catch (e) {}
@@ -639,8 +766,8 @@ export default function AdminPage() {
       <aside className="w-[260px] bg-white border-r border-[#F0F2F5] flex flex-col shrink-0 shadow-sm">
         {/* Logo */}
         <div className="px-6 py-5 border-b border-[#F0F2F5]">
-          <Link href="/" className="text-[22px] font-black text-[#1A202C] tracking-tight">
-            Tasti<span className="text-[#FF6B35]">o.</span>
+          <Link href="/" className="block">
+            <img src="/logo-tastio.png" alt="Tastio Logo" className="h-[56px] sm:h-[76px] scale-110 sm:scale-125 -ml-3 w-auto object-contain" />
           </Link>
         </div>
 
@@ -657,7 +784,16 @@ export default function AdminPage() {
               <p className="font-extrabold text-[14px] text-[#1A202C] truncate">{restaurant?.name || "Mi Restaurante"}</p>
               <p className="text-[11px] text-[#A0AEC0] truncate">{restaurant?.address}</p>
               <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${restaurant?.status === 'APPROVED' ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'}`}>
-                {restaurant?.status === 'APPROVED' ? '✅ Activo' : '⏳ Pendiente'}
+                {restaurant?.status === 'APPROVED' ? (
+                  <>
+                    ✅ Activo
+                    <span className="ml-1 opacity-80 font-medium">
+                      ({restaurant?.subscriptionPlan === 'MONTHLY' ? 'Mensual' : 
+                        (restaurant?.subscriptionPlan === 'ANNUAL' || restaurant?.subscriptionPlan === 'PREMIUM') ? 'Anual Premium' : 
+                        'Prueba'})
+                    </span>
+                  </>
+                ) : '⏳ Pendiente'}
               </span>
             </div>
           </div>
@@ -756,90 +892,350 @@ export default function AdminPage() {
 
           {/* ─── RESUMEN ─── */}
           {activeTab === "Resumen" && (
-            <div className="mt-6 space-y-6">
-              {/* KPIs reales */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <KPICard title={t.foodToday} value={stats.orders || 0} color="#FFF3EE"
-                  icon={<ShoppingBag className="w-5 h-5 text-[#FF6B35]" />} />
-                <KPICard title={t.totalRevenue} value={`€${(stats.revenue || 0).toFixed(2)}`} color="#ECFDF5"
-                  icon={<TrendingUp className="w-5 h-5 text-[#10B981]" />} />
-                <KPICard title={t.clientsToday} value={stats.customers || 0} color="#EBF8FF"
-                  icon={<MapPin className="w-5 h-5 text-[#3182CE]" />} />
-                <KPICard title={t.employees} value={products.length} color="#F3F0FF"
-                  icon={<LayoutGrid className="w-5 h-5 text-[#6C5DD3]" />} />
-              </div>
+            <div className="mt-6 flex flex-col xl:flex-row gap-6">
+              
+              {/* MAIN COLUMN */}
+              <div className="flex-1 flex flex-col space-y-6">
+                
+                {/* 1. KPIs */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white p-5 rounded-[20px] shadow-sm flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-[#FF6B35] flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(255,107,53,0.3)]">
+                      <ShoppingBag className="w-7 h-7 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-[13px] text-[#A0AEC0] font-semibold">Total Pedidos</p>
+                      <div className="flex items-end gap-2 mt-0.5">
+                        <p className="text-[22px] font-extrabold text-[#1A202C] leading-none">{stats.orders || 0}</p>
+                        <span className="text-[10px] font-bold text-green-500 flex items-center gap-0.5"><TrendingUp className="w-3 h-3"/>1.58%</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white p-5 rounded-[20px] shadow-sm flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-[#FF6B35] flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(255,107,53,0.3)]">
+                      <MapPin className="w-7 h-7 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-[13px] text-[#A0AEC0] font-semibold">Clientes Totales</p>
+                      <div className="flex items-end gap-2 mt-0.5">
+                        <p className="text-[22px] font-extrabold text-[#1A202C] leading-none">{stats.customers || 0}</p>
+                        <span className="text-[10px] font-bold text-green-500 flex items-center gap-0.5"><TrendingUp className="w-3 h-3"/>0.42%</span>
+                      </div>
+                    </div>
+                  </div>
 
-              {/* Gráfica de pedidos REALES */}
-              <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="font-extrabold text-[16px] text-[#1A202C]">{t.salesStats}</h3>
-                    <p className="text-[13px] text-[#A0AEC0]">{t.salesSummary}</p>
+                  <div className="bg-white p-5 rounded-[20px] shadow-sm flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-[#FF6B35] flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(255,107,53,0.3)]">
+                      <TrendingUp className="w-7 h-7 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-[13px] text-[#A0AEC0] font-semibold">Ingresos Totales</p>
+                      <div className="flex items-end gap-2 mt-0.5">
+                        <p className="text-[22px] font-extrabold text-[#1A202C] leading-none">€{(stats.revenue || 0).toFixed(2)}</p>
+                        <span className="text-[10px] font-bold text-green-500 flex items-center gap-0.5"><TrendingUp className="w-3 h-3"/>2.36%</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                {chartData.length > 0 && chartData.some(d => d.pedidos > 0) ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={chartData} barSize={28}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" vertical={false} />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#A0AEC0", fontSize: 12 }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fill: "#A0AEC0", fontSize: 12 }} />
-                      <Tooltip contentStyle={{ borderRadius: "12px", border: "1px solid #F0F2F5", boxShadow: "0 4px 20px rgba(0,0,0,0.08)" }} />
-                      <Bar dataKey="pedidos" name={t.qty} fill="#FF6B35" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-[220px] text-center">
-                    <BarChart2 className="w-12 h-12 text-[#E2E8F0] mb-3" />
-                    <p className="text-[14px] font-semibold text-[#A0AEC0]">Sin pedidos esta semana</p>
-                    <p className="text-[12px] text-[#CBD5E0]">Los datos aparecerán cuando recibas pedidos</p>
+
+                {/* 2. CHARTS ROW */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  
+                  {/* Revenue Line Chart */}
+                  <div className="bg-white rounded-[20px] p-6 shadow-sm flex flex-col">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h3 className="text-[13px] font-bold text-[#A0AEC0]">
+                          {revenuePeriod === 'weekly' ? 'Ingresos (Esta semana)' : revenuePeriod === 'monthly' ? 'Ingresos (Último mes)' : 'Ingresos (12 meses)'}
+                        </h3>
+                        <p className="text-[24px] font-extrabold text-[#1A202C] mt-1">€{(currentRevenue || 0).toFixed(2)}</p>
+                      </div>
+                      <select 
+                        value={revenuePeriod} 
+                        onChange={(e) => setRevenuePeriod(e.target.value)}
+                        className="bg-gray-50 border border-gray-100 text-[12px] font-bold text-[#4A5568] py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-gray-100 transition-colors"
+                      >
+                        <option value="weekly">Esta semana</option>
+                        <option value="monthly">Último mes</option>
+                        <option value="yearly">Últimos 12 meses</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-4 mb-4 mt-2 justify-end">
+                       <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#A0AEC0]"><div className="w-2 h-2 rounded-full bg-[#FF6B35]"/> Ingresos</div>
+                       <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#A0AEC0]"><div className="w-2 h-2 rounded-full bg-[#1A202C]"/> Gastos</div>
+                    </div>
+                    <div className="flex-1 min-h-[220px]">
+                      {(chartDataAll[revenuePeriod] || []).length > 0 && (chartDataAll[revenuePeriod] || []).some((d: any) => d.ingresos > 0) ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={chartDataAll[revenuePeriod] || []} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorIngresos" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#FF6B35" stopOpacity={0.1}/>
+                                <stop offset="95%" stopColor="#FF6B35" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F2F5" />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#A0AEC0' }} dy={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#A0AEC0' }} />
+                            <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                            <Area type="monotone" dataKey="ingresos" stroke="#FF6B35" strokeWidth={3} fillOpacity={1} fill="url(#colorIngresos)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex items-center justify-center h-full">
+                          <p className="text-[13px] text-[#A0AEC0]">Sin ingresos en este periodo</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+
+                  {/* Categories Donut & Order Types */}
+                  <div className="flex flex-col gap-6">
+                    {/* Top Categories */}
+                    <div className="bg-white rounded-[20px] p-6 shadow-sm flex-1 flex flex-col">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-[16px] font-extrabold text-[#1A202C]">Top Categorías</h3>
+                        <select 
+                          value={categoryPeriod}
+                          onChange={(e) => setCategoryPeriod(e.target.value)}
+                          className="bg-gray-50 border border-gray-100 text-[12px] font-bold text-[#4A5568] py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-gray-100 transition-colors"
+                        >
+                          <option value="weekly">Esta semana</option>
+                          <option value="monthly">Último mes</option>
+                          <option value="yearly">Últimos 12 meses</option>
+                        </select>
+                      </div>
+                      
+                      <div className="flex items-center justify-center h-[160px] relative mt-2">
+                        {categoryData.length > 0 ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie data={categoryData} innerRadius={55} outerRadius={75} paddingAngle={4} dataKey="value" stroke="none">
+                                {categoryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                              </Pie>
+                              <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <p className="text-[13px] text-[#A0AEC0]">Sin datos</p>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-3 mt-6">
+                        {categoryData.map((c, i) => (
+                          <div key={i} className="flex items-center justify-between text-[12px] font-semibold text-[#4A5568]">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: c.color }} />
+                              {c.name}
+                            </div>
+                            <span className="text-[#A0AEC0]">{c.value}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Orders Overview & Types ROW */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Orders Overview BarChart */}
+                  <div className="bg-white rounded-[20px] p-6 shadow-sm flex flex-col">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-[16px] font-extrabold text-[#1A202C]">Vista de Pedidos</h3>
+                      <select 
+                        value={ordersPeriod}
+                        onChange={(e) => setOrdersPeriod(e.target.value)}
+                        className="bg-gray-50 border border-gray-100 text-[12px] font-bold text-[#4A5568] py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-gray-100 transition-colors"
+                      >
+                        <option value="weekly">Esta semana</option>
+                        <option value="monthly">Último mes</option>
+                        <option value="yearly">Últimos 12 meses</option>
+                      </select>
+                    </div>
+                    <div className="h-[220px]">
+                      {(chartDataAll[ordersPeriod] || []).length > 0 && (chartDataAll[ordersPeriod] || []).some((d: any) => d.pedidos > 0) ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartDataAll[ordersPeriod] || []} barSize={24} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F2F5" />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#A0AEC0' }} dy={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#A0AEC0' }} />
+                            <Tooltip cursor={{ fill: '#FFF3EE' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                            <Bar dataKey="pedidos" fill="#FFD5C2" radius={[6, 6, 0, 0]} activeBar={{ fill: '#FF6B35' }} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex items-center justify-center h-full">
+                          <p className="text-[13px] text-[#A0AEC0]">Sin pedidos registrados</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Order Types */}
+                  <div className="bg-white rounded-[20px] p-6 shadow-sm flex flex-col justify-center">
+                    <div className="flex justify-between items-center mb-8">
+                      <h3 className="text-[16px] font-extrabold text-[#1A202C]">Tipos de Pedido</h3>
+                      <select 
+                        value={typesPeriod}
+                        onChange={(e) => setTypesPeriod(e.target.value)}
+                        className="bg-gray-50 border border-gray-100 text-[12px] font-bold text-[#4A5568] py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-gray-100 transition-colors"
+                      >
+                        <option value="weekly">Esta semana</option>
+                        <option value="monthly">Último mes</option>
+                        <option value="yearly">Últimos 12 meses</option>
+                      </select>
+                    </div>
+                    <div className="space-y-8">
+                      {orderTypesStats.map((type: any, idx: number) => (
+                        <div key={idx}>
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-[#FFF3EE] flex items-center justify-center shrink-0">
+                                {type.icon}
+                              </div>
+                              <div>
+                                <span className="text-[14px] font-extrabold text-[#1A202C]">{type.label} <span className="text-[#A0AEC0] font-medium ml-1">{type.percent}%</span></span>
+                              </div>
+                            </div>
+                            <span className="text-[16px] font-extrabold text-[#1A202C]">{type.num}</span>
+                          </div>
+                          <div className="w-full bg-[#F0F2F5] rounded-full h-2.5">
+                            <div className="h-2.5 rounded-full transition-all duration-1000" style={{ width: `${type.percent}%`, backgroundColor: type.color }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. RECENT ORDERS TABLE */}
+                <div className="bg-white rounded-[20px] p-6 shadow-sm overflow-hidden flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[16px] font-extrabold text-[#1A202C]">Pedidos Recientes</h3>
+                    <div className="flex items-center gap-3">
+                      <select className="bg-gray-50 border border-gray-100 text-[12px] font-bold text-[#4A5568] py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-gray-100 transition-colors">
+                        <option>Esta Semana</option>
+                      </select>
+                      <button onClick={() => setActiveTab('Pedidos')} className="bg-white border border-[#E2E8F0] px-4 py-1.5 rounded-xl text-[12px] font-bold text-[#4A5568] hover:bg-gray-50 transition-colors">
+                        Ver Todos
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr>
+                          <th className="text-[12px] font-semibold text-[#A0AEC0] py-4 border-b border-[#F0F2F5]">Order ID</th>
+                          <th className="text-[12px] font-semibold text-[#A0AEC0] py-4 border-b border-[#F0F2F5]">Plato / Menú</th>
+                          <th className="text-[12px] font-semibold text-[#A0AEC0] py-4 border-b border-[#F0F2F5]">Cant.</th>
+                          <th className="text-[12px] font-semibold text-[#A0AEC0] py-4 border-b border-[#F0F2F5]">Total</th>
+                          <th className="text-[12px] font-semibold text-[#A0AEC0] py-4 border-b border-[#F0F2F5]">Cliente</th>
+                          <th className="text-[12px] font-semibold text-[#A0AEC0] py-4 border-b border-[#F0F2F5]">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orders.slice(0, 5).map(o => {
+                          const mainItem = o.items?.[0]?.product;
+                          return (
+                            <tr key={o.id} className="hover:bg-gray-50/50 transition-colors border-b border-[#F0F2F5] last:border-0">
+                              <td className="py-4 text-[13px] font-bold text-[#4A5568]">#{o.id.substring(0,7).toUpperCase()}</td>
+                              <td className="py-4">
+                                <div className="flex items-center gap-3">
+                                  {mainItem?.imageUrl ? (
+                                    <img src={mainItem.imageUrl} className="w-12 h-12 rounded-[14px] object-cover border border-[#F0F2F5]" />
+                                  ) : (
+                                    <div className="w-12 h-12 rounded-[14px] bg-gray-100 flex items-center justify-center"><Package className="w-5 h-5 text-gray-400"/></div>
+                                  )}
+                                  <div>
+                                    <p className="text-[14px] font-extrabold text-[#1A202C] max-w-[160px] truncate">{mainItem?.name || "Varios Platos"}</p>
+                                    <p className="text-[12px] text-[#A0AEC0]">{mainItem?.category || "Menú"}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-4 text-[14px] font-extrabold text-[#1A202C]">{o.items?.length || 1}</td>
+                              <td className="py-4 text-[14px] font-extrabold text-[#FF6B35]">
+                                €{o.totalAmount?.toFixed(2)}
+                                {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#A0AEC0] ml-1 block mt-0.5">+ Envío</span>}
+                              </td>
+                              <td className="py-4 text-[13px] font-bold text-[#4A5568] truncate max-w-[120px]">{o.client?.name || "Invitado"}</td>
+                              <td className="py-4">
+                                <StatusBadge status={o.status} />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {orders.length === 0 && (
+                      <div className="py-10 text-center text-[13px] text-[#A0AEC0] font-medium">No hay pedidos recientes</div>
+                    )}
+                  </div>
+                </div>
+
               </div>
 
-              {/* Platos del menú (reales) */}
-              <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="font-extrabold text-[16px] text-[#1A202C]">{t.bestSellers}</h3>
-                    <p className="text-[13px] text-[#A0AEC0]">{t.bestSellersDesc}</p>
+              {/* RIGHT SIDEBAR: TRENDING MENUS */}
+              <div className="w-full xl:w-[320px] shrink-0">
+                <div className="bg-white rounded-[20px] p-6 shadow-sm sticky top-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-[16px] font-extrabold text-[#1A202C]">Menús en Tendencia</h3>
+                    <select 
+                      value={trendingPeriod}
+                      onChange={(e) => setTrendingPeriod(e.target.value)}
+                      className="bg-gray-50 border border-gray-100 text-[12px] font-bold text-[#4A5568] py-1.5 px-3 rounded-xl outline-none cursor-pointer hover:bg-gray-100 transition-colors"
+                    >
+                      <option value="weekly">Esta semana</option>
+                      <option value="monthly">Último mes</option>
+                      <option value="yearly">Últimos 12 meses</option>
+                    </select>
                   </div>
-                  <button onClick={() => setActiveTab("Catálogo")}
-                    className="text-[13px] font-bold text-[#FF6B35] hover:underline">Ver todo →</button>
-                </div>
-                {products.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Package className="w-12 h-12 text-[#E2E8F0] mx-auto mb-3" />
-                    <p className="text-[13px] text-[#A0AEC0]">Aún no tienes platos en el menú</p>
-                    <button onClick={() => setActiveTab("Catálogo")}
-                      className="mt-3 text-[13px] font-bold text-[#FF6B35] hover:underline">Añadir primer plato →</button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {products.slice(0, 5).map((p: any) => (
-                      <div key={p.id} className="flex items-center gap-4 p-3 rounded-2xl bg-[#F8F9FA] border border-[#F0F2F5]">
-                        <div className="w-12 h-12 rounded-xl bg-white border border-[#E2E8F0] overflow-hidden shrink-0">
-                          {p.imageUrl
-                            ? <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                            : <div className="w-full h-full flex items-center justify-center"><Package className="w-5 h-5 text-[#CBD5E0]" /></div>
-                          }
+
+                  <div className="space-y-5">
+                    {topProducts.map((p, idx) => (
+                      <div key={idx} className="bg-white border border-[#F0F2F5] rounded-[20px] overflow-hidden hover:shadow-lg transition-shadow duration-300 group cursor-pointer">
+                        <div className="h-40 w-full bg-gray-100 relative overflow-hidden">
+                          {p.imageUrl ? (
+                            <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <Package className="w-10 h-10 text-[#CBD5E0]" />
+                            </div>
+                          )}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-[14px] text-[#1A202C] truncate">{p.name}</p>
-                          {p.description && <p className="text-[11px] text-[#A0AEC0] truncate">{p.description}</p>}
+                        <div className="p-5">
+                          <h4 className="text-[15px] font-extrabold text-[#1A202C] mb-1 line-clamp-1">{p.name}</h4>
+                          <p className="text-[12px] font-medium text-[#A0AEC0] mb-4">{p.category || "Plato Principal"}</p>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center gap-1.5 text-[13px] font-extrabold text-[#4A5568]">
+                                <Star className="w-4 h-4 text-[#FFBE00] fill-[#FFBE00]" /> 4.9
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[13px] font-extrabold text-[#A0AEC0]">
+                                <ShoppingBag className="w-4 h-4" /> {p.sold || 0}
+                              </div>
+                            </div>
+                            <span className="text-[16px] font-black text-[#FF6B35]">€{(p.price || 0).toFixed(2)}</span>
+                          </div>
                         </div>
-                        <p className="font-black text-[#FF6B35] text-[15px] shrink-0">€{p.price?.toFixed(2)}</p>
                       </div>
                     ))}
+                    {topProducts.length === 0 && (
+                      <div className="py-8 text-center">
+                        <Package className="w-10 h-10 text-[#E2E8F0] mx-auto mb-3" />
+                        <p className="text-[13px] text-[#A0AEC0] font-medium">Añade productos para ver tendencias.</p>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           )}
 
           {/* ─── TPV ─── */}
           {activeTab === "TPV" && (
-            <div className="mt-6 flex flex-col h-full min-h-[600px] -mx-6 -mb-6">
-              <AdminTPV restaurant={restaurant} products={products} />
+            <div className="mt-6 flex flex-col h-full min-h-[600px] -mx-6 -mb-6 relative">
+              <AdminTPV restaurant={restaurant} products={products} onClose={() => setActiveTab("Resumen")} />
             </div>
           )}
 
@@ -860,20 +1256,70 @@ export default function AdminPage() {
                     {orders.filter((o:any)=>o.status==='PENDING').map((o:any) => {
                       const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
                       return (
-                      <div key={o.id} className={`bg-white p-4 rounded-2xl shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'}`}>
-                        <div className="flex justify-between items-start mb-2">
-                          <span className="font-mono text-[12px] font-bold text-[#718096]">#{o.id.substring(0,8)}</span>
-                          <span className="text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</span>
+                      <div key={o.id} className={`bg-white p-5 rounded-[20px] shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'} hover:shadow-md transition-shadow relative overflow-hidden`}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex flex-col">
+                            <span className="font-mono text-[13px] font-extrabold text-[#1A202C]">#{o.id.substring(0,8).toUpperCase()}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md mt-1 w-fit ${o.orderType === 'TPV' ? 'bg-indigo-100 text-indigo-700' : 'bg-[#FFF3EE] text-[#FF6B35]'}`}>
+                              {o.orderType === 'TPV' ? 'TPV (Tienda)' : 'Móvil / Web'}
+                            </span>
+                            <span className="text-[11px] font-bold text-[#A0AEC0] mt-1">{formatOrderTime(o.createdAt)}</span>
+                          </div>
+                          <span className="text-[15px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2.5 py-1 rounded-xl flex items-center gap-1">
+                            €{o.totalAmount?.toFixed(2)}
+                            {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#FF6B35]/80">+ Envío</span>}
+                          </span>
                         </div>
-                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email || "Cliente"}</p>
                         
-                        <div className="flex justify-between items-center mt-2 px-2 py-1.5 bg-[#F8F9FA] rounded-lg">
-                           <span className="text-[11px] font-bold text-[#718096]">Pedido: {formatOrderTime(o.createdAt)}</span>
-                           <span className={`text-[11px] font-black ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>{timeInfo.text}</span>
+                        <div className="bg-[#F8F9FA] rounded-xl p-3 mb-3 border border-[#F0F2F5]">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="w-8 h-8 rounded-full bg-[#E2E8F0] flex items-center justify-center shrink-0">
+                              <span className="text-[12px] font-extrabold text-[#4A5568]">{o.client?.name ? o.client.name.substring(0,2).toUpperCase() : 'CL'}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[13px] font-extrabold text-[#1A202C] truncate">{o.client?.name || o.client?.email || "Cliente Invitado"}</p>
+                              <p className="text-[11px] font-semibold text-[#718096] truncate">{o.client?.phone || 'Sin teléfono'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-1.5 text-[11px] font-bold text-[#4A5568] bg-white p-2 rounded-lg border border-[#F0F2F5]">
+                            <MapPin className="w-3.5 h-3.5 text-[#FF6B35] shrink-0 mt-0.5" />
+                            <span className="line-clamp-2 leading-snug">{o.deliveryAddress || o.client?.address || "Recogida en local"}</span>
+                          </div>
                         </div>
 
-                        <div className="mt-3">
-                          <button onClick={() => handleUpdateOrderStatus(o.id, 'PREPARING')} className="w-full bg-[#FF6B35] text-white text-[12px] font-bold py-2 rounded-xl hover:bg-[#e55a25] transition-colors">Empezar a preparar</button>
+                        {/* Order Items */}
+                        <div className="space-y-2 mb-3 bg-[#F8F9FA] rounded-xl p-3 border border-[#F0F2F5]">
+                          {o.items?.map((item: any, i: number) => (
+                            <div key={i} className="flex flex-col border-b border-[#E2E8F0] pb-2 mb-2 last:mb-0 last:pb-0 last:border-0">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[14px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2 py-0.5 rounded-lg">{item.qty}x</span>
+                                <span className="text-[13px] font-extrabold text-[#1A202C] leading-tight pt-1">{item.product?.name || "Producto"}</span>
+                              </div>
+                              {item.extras && item.extras.length > 0 && (
+                                <div className="mt-1.5 pl-9 space-y-1">
+                                  {item.extras.map((ex: any, j: number) => (
+                                    <div key={j} className="flex items-center gap-1.5 text-[11px] font-bold text-[#718096]">
+                                      <div className="w-1 h-1 rounded-full bg-[#CBD5E0]"></div>
+                                      <span className="leading-tight">{ex.name} {ex.qty > 1 ? `(x${ex.qty})` : ''}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex justify-between items-center mb-2 pt-3 border-t border-[#F0F2F5]">
+                           <span className="text-[12px] font-bold text-[#718096]">
+                             Hora de realizado: {timeInfo.creationTime}
+                           </span>
+                           <span className={`text-[12px] font-black flex items-center gap-1.5 ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>
+                             <Clock className="w-4 h-4" /> {timeInfo.text}
+                           </span>
+                        </div>
+
+                        <div className="mt-4">
+                          <button onClick={() => handleUpdateOrderStatus(o.id, 'PREPARING')} className="w-full bg-[#FF6B35] text-white text-[13px] font-bold py-2.5 rounded-xl hover:bg-[#e55a25] transition-colors shadow-[0_4px_12px_rgba(255,107,53,0.2)]">Empezar a preparar</button>
                         </div>
                       </div>
                     )})}
@@ -888,21 +1334,71 @@ export default function AdminPage() {
                     {orders.filter((o:any)=>o.status==='PREPARING').map((o:any) => {
                       const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
                       return (
-                      <div key={o.id} className={`bg-white p-4 rounded-2xl shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'}`}>
-                        <div className="flex justify-between items-start mb-2">
-                          <span className="font-mono text-[12px] font-bold text-[#718096]">#{o.id.substring(0,8)}</span>
-                          <span className="text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</span>
+                      <div key={o.id} className={`bg-white p-5 rounded-[20px] shadow-sm border ${timeInfo.isDelayed ? 'border-red-300' : 'border-[#E2E8F0]'} hover:shadow-md transition-shadow relative overflow-hidden`}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex flex-col">
+                            <span className="font-mono text-[13px] font-extrabold text-[#1A202C]">#{o.id.substring(0,8).toUpperCase()}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md mt-1 w-fit ${o.orderType === 'TPV' ? 'bg-indigo-100 text-indigo-700' : 'bg-[#FFF3EE] text-[#FF6B35]'}`}>
+                              {o.orderType === 'TPV' ? 'TPV (Tienda)' : 'Móvil / Web'}
+                            </span>
+                            <span className="text-[11px] font-bold text-[#A0AEC0] mt-1">{formatOrderTime(o.createdAt)}</span>
+                          </div>
+                          <span className="text-[15px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2.5 py-1 rounded-xl flex items-center gap-1">
+                            €{o.totalAmount?.toFixed(2)}
+                            {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#FF6B35]/80">+ Envío</span>}
+                          </span>
                         </div>
-                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email || "Cliente"}</p>
                         
-                        <div className="flex justify-between items-center mt-2 px-2 py-1.5 bg-[#F8F9FA] rounded-lg">
-                           <span className="text-[11px] font-bold text-[#718096]">Pedido: {formatOrderTime(o.createdAt)}</span>
-                           <span className={`text-[11px] font-black ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>{timeInfo.text}</span>
+                        <div className="bg-[#F8F9FA] rounded-xl p-3 mb-3 border border-[#F0F2F5]">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="w-8 h-8 rounded-full bg-[#E2E8F0] flex items-center justify-center shrink-0">
+                              <span className="text-[12px] font-extrabold text-[#4A5568]">{o.client?.name ? o.client.name.substring(0,2).toUpperCase() : 'CL'}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[13px] font-extrabold text-[#1A202C] truncate">{o.client?.name || o.client?.email || "Cliente Invitado"}</p>
+                              <p className="text-[11px] font-semibold text-[#718096] truncate">{o.client?.phone || 'Sin teléfono'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-1.5 text-[11px] font-bold text-[#4A5568] bg-white p-2 rounded-lg border border-[#F0F2F5]">
+                            <MapPin className="w-3.5 h-3.5 text-[#3182CE] shrink-0 mt-0.5" />
+                            <span className="line-clamp-2 leading-snug">{o.deliveryAddress || o.client?.address || "Recogida en local"}</span>
+                          </div>
                         </div>
 
-                        <div className="mt-3 flex gap-2">
-                          <button onClick={() => handleUpdateOrderStatus(o.id, 'PENDING')} className="px-3 bg-[#F0F2F5] text-[#718096] text-[12px] font-bold py-2 rounded-xl hover:bg-[#E2E8F0] transition-colors">Atrás</button>
-                          <button onClick={() => handleUpdateOrderStatus(o.id, 'ON_THE_WAY')} className="flex-1 bg-blue-100 text-blue-700 text-[12px] font-bold py-2 rounded-xl hover:bg-blue-200 transition-colors">Listo (En Camino)</button>
+                        {/* Order Items */}
+                        <div className="space-y-2 mb-3 bg-[#F8F9FA] rounded-xl p-3 border border-[#F0F2F5]">
+                          {o.items?.map((item: any, i: number) => (
+                            <div key={i} className="flex flex-col border-b border-[#E2E8F0] pb-2 mb-2 last:mb-0 last:pb-0 last:border-0">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[14px] font-black text-[#3182CE] bg-[#EBF8FF] px-2 py-0.5 rounded-lg">{item.qty}x</span>
+                                <span className="text-[13px] font-extrabold text-[#1A202C] leading-tight pt-1">{item.product?.name || "Producto"}</span>
+                              </div>
+                              {item.extras && item.extras.length > 0 && (
+                                <div className="mt-1.5 pl-9 space-y-1">
+                                  {item.extras.map((ex: any, j: number) => (
+                                    <div key={j} className="flex items-center gap-1.5 text-[11px] font-bold text-[#718096]">
+                                      <div className="w-1 h-1 rounded-full bg-[#CBD5E0]"></div>
+                                      <span className="leading-tight">{ex.name} {ex.qty > 1 ? `(x${ex.qty})` : ''}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex justify-between items-center mb-2 pt-3 border-t border-[#F0F2F5]">
+                           <span className="text-[12px] font-bold text-[#718096]">
+                             Hora de realizado: {timeInfo.creationTime}
+                           </span>
+                           <span className={`text-[12px] font-black flex items-center gap-1.5 ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>
+                             <Clock className="w-4 h-4" /> {timeInfo.text}
+                           </span>
+                        </div>
+
+                        <div className="mt-4 flex gap-2">
+                          <button onClick={() => handleUpdateOrderStatus(o.id, 'PENDING')} className="px-3.5 bg-[#F0F2F5] text-[#718096] text-[13px] font-bold py-2.5 rounded-xl hover:bg-[#E2E8F0] transition-colors">Atrás</button>
+                          <button onClick={() => handleUpdateOrderStatus(o.id, 'ON_THE_WAY')} className="flex-1 bg-blue-100 text-blue-700 text-[13px] font-bold py-2.5 rounded-xl hover:bg-blue-200 transition-colors">Listo (En Camino)</button>
                         </div>
                       </div>
                     )})}
@@ -917,22 +1413,80 @@ export default function AdminPage() {
                     {orders.filter((o:any)=>['ON_THE_WAY', 'DELIVERED'].includes(o.status)).map((o:any) => {
                       const timeInfo = getDelayInfo(o.createdAt, restaurant?.bufferTime || 30);
                       return (
-                      <div key={o.id} className={`bg-white p-4 rounded-2xl shadow-sm border ${o.status === 'DELIVERED' ? 'opacity-60 grayscale' : 'border-[#E2E8F0]'}`}>
-                        <div className="flex justify-between items-start mb-2">
-                          <span className="font-mono text-[12px] font-bold text-[#718096]">#{o.id.substring(0,8)}</span>
-                          <span className="text-[14px] font-black text-[#FF6B35]">€{o.totalAmount?.toFixed(2)}</span>
+                      <div key={o.id} className={`bg-white p-5 rounded-[20px] shadow-sm border ${o.status === 'DELIVERED' ? 'opacity-60 grayscale' : 'border-[#E2E8F0]'} hover:shadow-md transition-shadow relative overflow-hidden`}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex flex-col">
+                            <span className="font-mono text-[13px] font-extrabold text-[#1A202C]">#{o.id.substring(0,8).toUpperCase()}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md mt-1 w-fit ${o.orderType === 'TPV' ? 'bg-indigo-100 text-indigo-700' : 'bg-[#FFF3EE] text-[#FF6B35]'}`}>
+                              {o.orderType === 'TPV' ? 'TPV (Tienda)' : 'Móvil / Web'}
+                            </span>
+                            <span className="text-[11px] font-bold text-[#A0AEC0] mt-1">{formatOrderTime(o.createdAt)}</span>
+                          </div>
+                          <span className="text-[15px] font-black text-[#FF6B35] bg-[#FFF3EE] px-2.5 py-1 rounded-xl flex items-center gap-1">
+                            €{o.totalAmount?.toFixed(2)}
+                            {o.orderType === 'DELIVERY' && <span className="text-[10px] text-[#FF6B35]/80">+ Envío</span>}
+                          </span>
                         </div>
-                        <p className="text-[13px] font-bold text-[#1A202C]">{o.client?.name || o.client?.email || "Cliente"}</p>
                         
-                        <div className="flex justify-between items-center mt-2 px-2 py-1.5 bg-[#F8F9FA] rounded-lg">
-                           <span className="text-[11px] font-bold text-[#718096]">Pedido: {formatOrderTime(o.createdAt)}</span>
+                        <div className="bg-[#F8F9FA] rounded-xl p-3 mb-3 border border-[#F0F2F5]">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="w-8 h-8 rounded-full bg-[#E2E8F0] flex items-center justify-center shrink-0">
+                              <span className="text-[12px] font-extrabold text-[#4A5568]">{o.client?.name ? o.client.name.substring(0,2).toUpperCase() : 'CL'}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[13px] font-extrabold text-[#1A202C] truncate">{o.client?.name || o.client?.email || "Cliente Invitado"}</p>
+                              <p className="text-[11px] font-semibold text-[#718096] truncate">{o.client?.phone || 'Sin teléfono'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-1.5 text-[11px] font-bold text-[#4A5568] bg-white p-2 rounded-lg border border-[#F0F2F5]">
+                            <MapPin className="w-3.5 h-3.5 text-[#38A169] shrink-0 mt-0.5" />
+                            <span className="line-clamp-2 leading-snug">{o.deliveryAddress || o.client?.address || "Recogida en local"}</span>
+                          </div>
                         </div>
 
-                        <div className="mt-3">
+                        {/* Order Items */}
+                        <div className="space-y-2 mb-3 bg-[#F8F9FA] rounded-xl p-3 border border-[#F0F2F5]">
+                          {o.items?.map((item: any, i: number) => (
+                            <div key={i} className="flex flex-col border-b border-[#E2E8F0] pb-2 mb-2 last:mb-0 last:pb-0 last:border-0">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[14px] font-black text-[#38A169] bg-[#F0FFF4] px-2 py-0.5 rounded-lg">{item.qty}x</span>
+                                <span className="text-[13px] font-extrabold text-[#1A202C] leading-tight pt-1">{item.product?.name || "Producto"}</span>
+                              </div>
+                              {item.extras && item.extras.length > 0 && (
+                                <div className="mt-1.5 pl-9 space-y-2">
+                                  {Array.from(new Set(item.extras.map((ex: any) => ex.section))).map((secName: any, idx: number) => (
+                                    <div key={idx}>
+                                      <div className="text-[10px] font-black uppercase text-[#A0AEC0] tracking-wider mb-0.5">{secName}:</div>
+                                      {item.extras.filter((ex: any) => ex.section === secName).map((ex: any, j: number) => (
+                                        <div key={j} className="flex items-center gap-1.5 text-[11px] font-bold text-[#718096]">
+                                          <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B35]"></div>
+                                          <span className="leading-tight">{ex.name} {ex.qty > 1 ? `(x${ex.qty})` : ''}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex justify-between items-center mb-2 pt-3 border-t border-[#F0F2F5]">
+                           <span className="text-[12px] font-bold text-[#718096]">
+                             Hora de realizado: {timeInfo.creationTime}
+                           </span>
+                           <span className={`text-[12px] font-black flex items-center gap-1.5 ${timeInfo.isDelayed ? 'text-red-500' : 'text-[#38A169]'}`}>
+                             <Clock className="w-4 h-4" /> {timeInfo.text}
+                           </span>
+                        </div>
+
+                        <div className="mt-4">
                           {o.status === 'ON_THE_WAY' ? (
-                             <button onClick={() => handleUpdateOrderStatus(o.id, 'DELIVERED')} className="w-full bg-green-100 text-green-700 text-[12px] font-bold py-2 rounded-xl hover:bg-green-200 transition-colors">Marcar Entregado</button>
+                             <button onClick={() => handleUpdateOrderStatus(o.id, 'DELIVERED')} className="w-full bg-green-100 text-green-700 text-[13px] font-bold py-2.5 rounded-xl hover:bg-green-200 transition-colors">Marcar Entregado</button>
                           ) : (
-                             <div className="w-full bg-[#F0F2F5] text-[#718096] text-center text-[12px] font-bold py-2 rounded-xl">Entregado</div>
+                             <div className="w-full bg-[#F0F2F5] text-[#718096] text-center text-[13px] font-bold py-2.5 rounded-xl flex items-center justify-center gap-2">
+                               <Check className="w-4 h-4" /> Entregado
+                             </div>
                           )}
                         </div>
                       </div>
@@ -1123,9 +1677,9 @@ export default function AdminPage() {
 
               <div className="bg-white rounded-3xl p-6 border border-[#F0F2F5] shadow-sm">
                 <h3 className="font-extrabold text-[16px] text-[#1A202C] mb-6">Pedidos por día (últimos 7 días)</h3>
-                {chartData.length > 0 && chartData.some(d => d.pedidos > 0) ? (
+                {chartDataAll && chartDataAll.weekly ? (
                   <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={chartData} barSize={32}>
+                    <BarChart data={chartDataAll.weekly} barSize={32}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" vertical={false} />
                       <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#A0AEC0", fontSize: 12 }} />
                       <YAxis axisLine={false} tickLine={false} tick={{ fill: "#A0AEC0", fontSize: 12 }} />
@@ -1137,8 +1691,7 @@ export default function AdminPage() {
                 ) : (
                   <div className="flex flex-col items-center justify-center h-[240px]">
                     <BarChart2 className="w-14 h-14 text-[#E2E8F0] mb-3" />
-                    <p className="text-[14px] font-semibold text-[#A0AEC0]">Sin datos disponibles</p>
-                    <p className="text-[12px] text-[#CBD5E0]">Los datos aparecen cuando recibes pedidos reales</p>
+                    <p className="text-[14px] font-semibold text-[#A0AEC0]">Cargando datos...</p>
                   </div>
                 )}
               </div>
